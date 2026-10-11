@@ -34,12 +34,12 @@ interface IWETH {
 }
 
 contract DirectSwap {
-    address public constant POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
-    address public constant USDC = 0x31d0220469e10c4E71834a79b1f276d740d3768F;
-    address public constant HOOK = 0x3F3571A37e3398FdE31DcdC1138458E2D7C9BfF0;
-    address public constant WETH = 0x4200000000000000000000000000000000000006;
+    address public constant POOL_MANAGER = 0x451D64ab3b650040d2aE1886602b97ed6eDc643d;
+    address public constant USDC = 0x534b2f3A21130d7a60830c2Df862319e593943A3;
+    address public constant HOOK = 0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0;
+    address public constant WETH = 0x45477f4709771331db81944A5E20eF95Bc7BA2D7;
     
-    bytes32 public constant POOL_ID = 0x002b8ad258154f5e44e8f2960e2aa0671f88b857037c8e089d8c463e7b1150f5;
+    bytes32 public constant POOL_ID = 0x4dcd2ab926bedf4668df25be63e75dbed286bdec1e591faa14fb7609517f3f76;
     
     event Debug(string message);
     event DebugUint(string label, uint256 value);

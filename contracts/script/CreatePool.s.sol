@@ -25,16 +25,16 @@ interface IAngelHookV2 is IHooks {
 }
 
 contract CreatePool is Script {
-    // Unichain Sepolia Addresses
-    address constant POSITION_MANAGER = 0xf969Aee60879C54bAAed9F3eD26147Db216Fd664;
-    address constant POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
-    address constant USDC = 0x31d0220469e10c4E71834a79b1f276d740d3768F;
+    // Monad testnet Addresses
+    address constant POSITION_MANAGER = 0x3Bb14E3D0Cd50aBe3EdACa06d06c29C78676C31A;
+    address constant POOL_MANAGER = 0x451D64ab3b650040d2aE1886602b97ed6eDc643d;
+    address constant USDC = 0x534b2f3A21130d7a60830c2Df862319e593943A3;
     address constant NATIVE_ETH = address(0);
     
     uint24 constant FEE = 3000;
     int24 constant TICK_SPACING = 60;
     
-    address constant HOOK_ADDRESS = 0xC57066e35bEd99634B0e90111b56859bD8863FF0;
+    address constant HOOK_ADDRESS = 0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0;
     
     // Hook flags - matching the PoolManager's expectations (bits 4-13)
     // Based on Hooks.sol from Uniswap V4:

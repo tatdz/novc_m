@@ -593,7 +593,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         
         PoolKey memory key = PoolKey({
             currency0: Currency.wrap(USDC),
-            currency1: Currency.wrap(NATIVE_ETH),
+            currency1: Currency.wrap(NATIVE_MON),
             fee: DEFAULT_FEE,
             tickSpacing: DEFAULT_TICK_SPACING,
             hooks: address(this)
@@ -745,7 +745,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         
         _recalculateShares();
         
-        emit Withdrawal(msg.sender, NATIVE_ETH, amount);
+        emit Withdrawal(msg.sender, NATIVE_MON, amount);
     }
 
     function _subtractFromSlices(uint256 amount) internal {

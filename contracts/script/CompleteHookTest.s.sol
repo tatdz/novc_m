@@ -109,7 +109,7 @@ interface INoVCAngelHook {
 }
 
 contract CompleteHookTest is Script {
-    address constant HOOK = 0x3F3571A37e3398FdE31DcdC1138458E2D7C9BfF0;
+    address constant HOOK = 0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0;
     address constant USDC = 0x534b2f3A21130d7a60830c2Df862319e593943A3;
     address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     address constant PYTH = 0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379;
