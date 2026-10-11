@@ -1,0 +1,78 @@
+// lib/circle-addresses.ts
+import { type Address } from 'viem'
+
+export const USDC_ADDRESSES: Record<number, Address> = {
+  // Ethereum Sepolia
+  11155111: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+  
+  // Arc Testnet
+  5042002: '0x3600000000000000000000000000000000000000',
+  
+  // Base Sepolia
+  84532: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  
+  // Arbitrum Sepolia
+  421614: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+  
+  // OP Sepolia
+  11155420: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
+  
+  // Polygon Amoy
+  80002: '0x41e94eb019c0762f9bfcf9fb1e58725bfb0e7582',
+  
+  // Avalanche Fuji
+  43113: '0x5425890298aed601595a70ab815c96711a31bc65',
+  
+  // Unichain Sepolia
+  1301: '0x31d0220469e10c4E71834a79b1f276d740d3768F',
+  
+  // Sei Atlantic
+  1328: '0x4fCF1784B31630811181f670Aea7A7bEF803eaED',
+
+  // Monad Testnet
+  10143: '0x534b2f3A21130d7a60830c2Df862319e593943A3'
+}
+
+// CCTP contracts must be deployed on Arc for real cross-chain transfers.
+// See arc-testnet-deployment.ts for deployment instructions.
+export const TOKEN_MESSENGER_ADDRESSES: Record<number, Address> = {
+  11155111: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  5042002: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', 
+  84532: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  421614: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  11155420: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  80002: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  43113: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  1301: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  1328: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+  10143: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA',
+}
+
+export const MESSAGE_TRANSMITTER_ADDRESSES: Record<number, Address> = {
+  11155111: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  5042002: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275', 
+  84532: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  421614: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  11155420: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  80002: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  43113: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  1301: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  1328: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  10143: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+}
+
+export function getUSDCForChain(chainId: number): Address | undefined {
+  return USDC_ADDRESSES[chainId]
+}
+
+export function getTokenMessengerForChain(chainId: number): Address | undefined {
+  return TOKEN_MESSENGER_ADDRESSES[chainId]
+}
+
+export function getMessageTransmitterForChain(chainId: number): Address | undefined {
+  return MESSAGE_TRANSMITTER_ADDRESSES[chainId]
+}
+
+export function isChainSupported(chainId: number): boolean {
+  return chainId in USDC_ADDRESSES
+}
