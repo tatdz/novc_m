@@ -115,8 +115,11 @@ Connect Wallet → Deposit USDC → Vote on Proposals → Earn Returns
 
 ## Deployed Contracts (Monad Testnet)
 
-| **NoVC Angel Hook** | `0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0` https://testnet.monadscan.com/address/0x8f93d9b74e8034ffa21bf423a43ad0a67a48bff0| Angel Pool with deposit/withdraw/vote + Uniswap v4 hook (beforeSwap/afterSwap) **pool id** | `0x4dcd2ab926bedf4668df25be63e75dbed286bdec1e591faa14fb7609517f3f76` |
-| **Mock Token (RocketClaw)** | `0x8699FC6ec5E9976fc5D6D3A8f23AAf8bA9ec0b65` | Test ERC20 token for auctions |
+- **NoVC Angel Hook** | `0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0` https://testnet.monadscan.com/address/0x8f93d9b74e8034ffa21bf423a43ad0a67a48bff0| Angel Pool with deposit/withdraw/vote + Uniswap v4 hook (beforeSwap/afterSwap)
+- **pool id** | `0x4dcd2ab926bedf4668df25be63e75dbed286bdec1e591faa14fb7609517f3f76` 
+- **Mock Token (RocketClaw)/Test ERC20 for auctions** | `0x8699FC6ec5E9976fc5D6D3A8f23AAf8bA9ec0b65` 
+- **Continious Clearing Auction Factory** | `0x7899770762d96c1F63cED8383C8B8C2dA16cD1b6` 
+- **PoolSwapTest** | `0xc4006B415D3625047E039e16C13766483CEE42cD` 
 
 
 ### Supported CCTP Chains
