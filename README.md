@@ -115,8 +115,8 @@ Connect Wallet → Deposit USDC → Vote on Proposals → Earn Returns
 
 ## Deployed Contracts (Monad Testnet)
 
-| **NoVC Angel Hook** | `0x3F3571A37e3398FdE31DcdC1138458E2D7C9BfF0` | Angel Pool with deposit/withdraw/vote + Uniswap v4 hook (beforeSwap/afterSwap) **pool id** | `0x002b8ad258154f5e44e8f2960e2aa0671f88b857037c8e089d8c463e7b1150f5` |
-| **Mock Token (RocketClaw)** | `0x2355d9cfe6b97Ca5258EFE392a295682AB8dF5c6` | Test ERC20 token for auctions |
+| **NoVC Angel Hook** | `0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0` https://testnet.monadscan.com/address/0x8f93d9b74e8034ffa21bf423a43ad0a67a48bff0| Angel Pool with deposit/withdraw/vote + Uniswap v4 hook (beforeSwap/afterSwap) **pool id** | `0x4dcd2ab926bedf4668df25be63e75dbed286bdec1e591faa14fb7609517f3f76` |
+| **Mock Token (RocketClaw)** | `0x8699FC6ec5E9976fc5D6D3A8f23AAf8bA9ec0b65` | Test ERC20 token for auctions |
 
 
 ### Supported CCTP Chains
