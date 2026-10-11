@@ -8,42 +8,40 @@ import { useAngelPool } from '@/hooks/useAngelPool'
 import { CONTRACT_ADDRESSES } from '@/lib/abis'
 import { CONTRACTS, PYTH_FEEDS } from '@/lib/contracts'
 import { useAuctionStore } from '@/lib/auctionStore'
-import { createPublicClient, http } from 'viem'
-import { monadTestnet } from 'viem/chains'
 
-const inputStyle = { 
-  padding: '10px', 
-  background: '#1e1e2e', 
-  border: '1px solid #2d2d44', 
-  borderRadius: '8px', 
-  color: '#F8FAFC', 
-  fontSize: '13px', 
-  width: '100%', 
-  boxSizing: 'border-box' as const 
+const inputStyle = {
+  padding: '10px',
+  background: '#1e1e2e',
+  border: '1px solid #2d2d44',
+  borderRadius: '8px',
+  color: '#F8FAFC',
+  fontSize: '13px',
+  width: '100%',
+  boxSizing: 'border-box' as const
 }
 
-const btnPrimary = { 
-  padding: '10px 16px', 
-  background: 'linear-gradient(135deg, #8B5CF6, #6366F1)', 
-  border: 'none', 
-  borderRadius: '8px', 
-  color: '#fff', 
-  fontWeight: 600 as const, 
-  cursor: 'pointer', 
-  fontSize: '13px', 
-  width: '100%' 
+const btnPrimary = {
+  padding: '10px 16px',
+  background: 'linear-gradient(135deg, #8B5CF6, #6366F1)',
+  border: 'none',
+  borderRadius: '8px',
+  color: '#fff',
+  fontWeight: 600 as const,
+  cursor: 'pointer',
+  fontSize: '13px',
+  width: '100%'
 }
 
-const btnSuccess = { 
-  padding: '10px 16px', 
-  background: 'linear-gradient(135deg, #4ADE80, #22C55E)', 
-  border: 'none', 
-  borderRadius: '8px', 
-  color: '#000', 
-  fontWeight: 700 as const, 
-  cursor: 'pointer', 
-  fontSize: '13px', 
-  width: '100%' 
+const btnSuccess = {
+  padding: '10px 16px',
+  background: 'linear-gradient(135deg, #4ADE80, #22C55E)',
+  border: 'none',
+  borderRadius: '8px',
+  color: '#000',
+  fontWeight: 700 as const,
+  cursor: 'pointer',
+  fontSize: '13px',
+  width: '100%'
 }
 
 interface PythPrice {
@@ -103,19 +101,16 @@ export function AngelPoolDashboard() {
   const [swapTxHash, setSwapTxHash] = useState<string | null>(null)
   const [feesLoading, setFeesLoading] = useState(false)
 
-const HOOK_USDC = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
-
-const { data: usdcBalance } = useBalance({
-  address,
-  token: HOOK_USDC,
-  chainId: CONTRACT_ADDRESSES.CHAIN_ID
-})
-
+  const { data: usdcBalance } = useBalance({
+    address,
+    token: USDC_ADDRESS,
+    chainId: CONTRACT_ADDRESSES.CHAIN_ID
+  })
 
   // ==================== AUTO-REFRESH EFFECT ====================
   useEffect(() => {
     if (!isConnected) return
-    
+
     const refreshData = async () => {
       try {
         await Promise.all([
@@ -128,10 +123,10 @@ const { data: usdcBalance } = useBalance({
         console.error('[UI] Auto-refresh failed:', err)
       }
     }
-    
+
     refreshData()
     const interval = setInterval(refreshData, 10000)
-    
+
     return () => clearInterval(interval)
   }, [isConnected, lastAction, refreshPoolInfo, refreshInvestorInfo])
 
@@ -146,28 +141,28 @@ const { data: usdcBalance } = useBalance({
       console.log('[UI] Cannot refresh auctions: functions not available')
       return
     }
-    
+
     setIsRefreshing(true)
-    
+
     try {
       console.log('[UI] Refreshing auctions from contract...')
       const ids = await getPoolAuctionInvestments()
       console.log('[UI] Contract auction IDs:', ids)
-      
+
       const currentBlock = await publicClient.getBlockNumber()
       setCurrentBlockNumber(Number(currentBlock))
-      
+
       if (!ids || ids.length === 0) {
         console.log('[UI] No auctions found in contract')
         setPoolAuctions([])
         return
       }
       console.log('[UI] Current block:', currentBlock.toString())
-      
+
       const details = await Promise.all(ids.map(async (id: number) => {
-        try { 
+        try {
           const detail = await getAuctionDetails(id)
-          
+
           if (detail && detail.auctionAddress) {
             console.log(`[UI] Auction ${id} state:`, {
               isActive: detail.isActive,
@@ -175,7 +170,7 @@ const { data: usdcBalance } = useBalance({
               status: detail.status,
               bidId: detail.bidId
             })
-            
+
             try {
               const endBlock = await publicClient.readContract({
                 address: detail.auctionAddress,
@@ -188,15 +183,15 @@ const { data: usdcBalance } = useBalance({
                 }],
                 functionName: 'endBlock'
               }) as bigint
-              
+
               const isEnded = currentBlock >= endBlock
               const wasExecuted = !!detail.isExecuted || detail.status === 'executed' || (detail.bidId && detail.bidId !== '0')
-              
+
               if (isEnded && !wasExecuted) {
                 console.log(`[UI] Auction ${id} has ended (endBlock: ${endBlock}) and not executed, filtering out`)
                 return null
               }
-              
+
               const isGraduated = await publicClient.readContract({
                 address: detail.auctionAddress,
                 abi: [{
@@ -208,12 +203,12 @@ const { data: usdcBalance } = useBalance({
                 }],
                 functionName: 'isGraduated'
               }).catch(() => false)
-              
+
               if (isGraduated && !wasExecuted) {
                 console.log(`[UI] Auction ${id} has graduated and not executed, filtering out`)
                 return null
               }
-              
+
               return {
                 ...detail,
                 endBlock: endBlock.toString()
@@ -223,14 +218,14 @@ const { data: usdcBalance } = useBalance({
               return detail
             }
           }
-          
-          return detail 
+
+          return detail
         } catch (err) {
           console.log(`[UI] Failed to fetch auction ${id}:`, err)
           return null
         }
       }))
-      
+
       const validAuctions = details.filter(Boolean)
       setPoolAuctions(validAuctions)
       console.log('[UI] Set poolAuctions to:', validAuctions.length, 'active auctions')
@@ -256,7 +251,7 @@ const { data: usdcBalance } = useBalance({
         }],
         functionName: 'totalSwapFeesCollected'
       }) as bigint
-      
+
       const formatted = formatUnits(result, 6)
       setTotalSwapFees(formatted)
       console.log('[UI] Total swap fees collected:', formatted, 'USDC')
@@ -298,10 +293,9 @@ const { data: usdcBalance } = useBalance({
     try {
       console.log('[Swap] Using DirectSwap contract at:', DIRECT_SWAP_ADDRESS)
       console.log('[Swap] Swap amount:', swapAmount, 'ETH')
-      
+
       setSwapStatus('Executing swap...')
-      
-      // Call swapETHForUSDC on the DirectSwap contract
+
       const txHash = await walletClient.writeContract({
         address: DIRECT_SWAP_ADDRESS,
         abi: [{
@@ -322,43 +316,38 @@ const { data: usdcBalance } = useBalance({
       setSwapTxHash(txHash)
       setSwapStatus('Swap submitted, waiting for confirmation...')
 
-      const receipt = await publicClient.waitForTransactionReceipt({ 
+      const receipt = await publicClient.waitForTransactionReceipt({
         hash: txHash,
         timeout: 60000
       })
-      
+
       console.log('[Swap] Transaction receipt:', receipt)
-      
+
       if (receipt.status === 'success') {
         setSwapStatus('Swap completed successfully!')
         console.log('[Swap] Swap successful!')
-        
-        // Wait for state update
+
         await new Promise(resolve => setTimeout(resolve, 2000))
-        
-        // Refresh data
+
         await fetchSwapFees()
         await refreshPoolInfo()
         await refreshInvestorInfo()
         triggerRefresh()
-        
+
         setSwapAmount('')
       } else {
         console.error('[Swap] Transaction failed:', receipt)
         setSwapError('Swap transaction failed - check explorer for details')
       }
-
     } catch (err: any) {
       console.error('[Swap] Swap failed with error:', err)
-      
-      // Parse error message
+
       let errorMessage = err?.shortMessage || err?.message || 'Swap failed'
-      
-      // Check for common errors
+
       if (err?.message?.includes('execution reverted')) {
         errorMessage = 'Transaction reverted - check if you have enough ETH'
       }
-      
+
       setSwapError(errorMessage)
     } finally {
       setFeesLoading(false)
@@ -396,6 +385,9 @@ const { data: usdcBalance } = useBalance({
   }, [activeSection])
 
   // ==================== DEPOSIT HANDLER ====================
+  // ✅ FIX: refresh contract state before deciding to auto-allocate, and skip
+  // allocateSlices if the contract's idle slice is already zero (the deposit
+  // auto-allocation would have drained it).
   const handleDeposit = async () => {
     if (!depositAmount || parseFloat(depositAmount) <= 0) return
     try {
@@ -412,22 +404,48 @@ const { data: usdcBalance } = useBalance({
 
       setSuccess(prev => (prev || '') + ' — Waiting for confirmation...')
       await new Promise(resolve => setTimeout(resolve, 5000))
-      
+
+      // ✅ FIX: refresh + read contract directly before attempting allocate.
+      await refreshPoolInfo()
+      await refreshInvestorInfo()
+
+      let idleNow = 0
       try {
-        setSuccess(prev => (prev || '') + ' — Allocating 30/70...')
-        await allocateSlices()
-        setSuccess(`✅ Deposited & allocated ${depositAmount} ${depositType.toUpperCase()}`)
-        
+        const info = await hookContract?.getPoolInfo()
+        const arr = info as any[]
+        idleNow = Number(formatUnits(BigInt(arr[3]?.toString() || '0'), 6))
+      } catch (e) {
+        console.log('[Deposit] Could not read pool info before allocate', e)
+      }
+
+      if (idleNow > 0) {
+        try {
+          setSuccess(prev => (prev || '') + ' — Allocating 30/70...')
+          await allocateSlices()
+          setSuccess(`✅ Deposited & allocated ${depositAmount} ${depositType.toUpperCase()}`)
+
+          await refreshPoolInfo()
+          await refreshInvestorInfo()
+          await refreshAuctionsFromContract()
+          triggerRefresh()
+        } catch (err: any) {
+          console.log('[Deposit] Allocation failed - funds are in idle state')
+          const msg = err?.message || ''
+          if (msg.includes('No idle funds')) {
+            setSuccess(`✅ Deposited ${depositAmount} ${depositType.toUpperCase()} — already allocated`)
+          } else {
+            setSuccess(`Deposited ${depositAmount} ${depositType.toUpperCase()} — Click "Allocate" to split 30/70`)
+          }
+          triggerRefresh()
+        }
+      } else {
+        setSuccess(`✅ Deposited ${depositAmount} ${depositType.toUpperCase()} — allocated 30/70 automatically`)
         await refreshPoolInfo()
         await refreshInvestorInfo()
         await refreshAuctionsFromContract()
         triggerRefresh()
-      } catch (err) {
-        console.log('[Deposit] Allocation failed - funds are in idle state')
-        setSuccess(`Deposited ${depositAmount} ${depositType.toUpperCase()} — Click "Allocate" to split 30/70`)
-        triggerRefresh()
       }
-      
+
       setTimeout(() => setSuccess(null), 5000)
     } catch (err: any) {
       setLocalError(err?.reason || err?.message || 'Deposit failed')
@@ -461,19 +479,37 @@ const { data: usdcBalance } = useBalance({
   }
 
   // ==================== ALLOCATE HANDLER ====================
+  // ✅ FIX: re-read the contract's idle slice before acting; if it is 0,
+  // show a friendly message instead of letting simulateContract revert.
   const handleAllocate = async () => {
     try {
       setIsAllocating(true)
       setLocalError(null)
-      
+
+      // Refresh state, then read the contract directly.
+      await refreshPoolInfo()
+      let idleNow = 0
+      try {
+        const info = await hookContract?.getPoolInfo()
+        const arr = info as any[]
+        idleNow = Number(formatUnits(BigInt(arr[3]?.toString() || '0'), 6))
+      } catch (e) {
+        console.log('[Allocate] could not read pool info', e)
+      }
+
+      if (idleNow <= 0) {
+        setLocalError('No idle funds — deposits are already allocated 30/70.')
+        return
+      }
+
       console.log('[Allocate] Recovering accounting...')
       await recoverAccounting()
-      
+
       await new Promise(resolve => setTimeout(resolve, 5000))
-      
+
       console.log('[Allocate] Allocating slices...')
       await allocateSlices()
-      
+
       setSuccess('Allocated: 30% APY / 70% Auction')
       await refreshAuctionsFromContract()
       triggerRefresh()
@@ -481,8 +517,8 @@ const { data: usdcBalance } = useBalance({
     } catch (err: any) {
       console.error('[Allocate] Error:', err)
       setLocalError(err?.reason || err?.message || 'Allocation failed')
-    } finally { 
-      setIsAllocating(false) 
+    } finally {
+      setIsAllocating(false)
     }
   }
 
@@ -499,13 +535,13 @@ const { data: usdcBalance } = useBalance({
       setLoadingVote(true)
       setLocalError(null)
       const amountWei = parseUnits(proposalAmount, 6)
-      
+
       console.log('[Propose] Sending proposal...')
       await proposeAuction(proposalAuction as any, amountWei.toString(), '0')
       setSuccess('Investment proposed! Voting open.')
       setProposalAuction('')
       setProposalAmount('')
-      
+
       await new Promise(resolve => setTimeout(resolve, 3000))
       await refreshAuctionsFromContract()
       triggerRefresh()
@@ -530,7 +566,7 @@ const { data: usdcBalance } = useBalance({
       console.log(`[Vote] Voting ${voteFor ? 'YES' : 'NO'} on auction ${auctionId}`)
       await voteOnAuction(auctionId, voteFor)
       setSuccess(`Voted ${voteFor ? 'YES' : 'NO'}`)
-      
+
       await new Promise(resolve => setTimeout(resolve, 3000))
       await refreshAuctionsFromContract()
       triggerRefresh()
@@ -548,15 +584,15 @@ const { data: usdcBalance } = useBalance({
       setLocalError('Wallet not connected or contract not initialized')
       return
     }
-    
+
     setExecutingBid(auctionId)
     setLocalError(null)
-    
+
     try {
       console.log('[ExecuteBid] Using hook contract for auction ID:', auctionId)
-      
+
       const hookAddr = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
-      
+
       const auctionCheck = await publicClient.readContract({
         address: hookAddr,
         abi: [{
@@ -585,10 +621,10 @@ const { data: usdcBalance } = useBalance({
         functionName: 'auctionInvestments',
         args: [BigInt(auctionId)]
       }) as any
-      
+
       const proposedAmount = auctionCheck[3]
       const auctionAddress = auctionCheck[1] as Address
-      
+
       console.log('[ExecuteBid] Contract auction state:', {
         proposedAmount: formatUnits(proposedAmount, 6),
         isActive: auctionCheck[7],
@@ -611,7 +647,7 @@ const { data: usdcBalance } = useBalance({
 
       if (!isPermit2Approved) {
         console.log('[ExecuteBid] Permit2 not approved, approving USDC for Permit2 first...')
-        
+
         const permit2ApproveHash = await walletClient.writeContract({
           address: hookAddr,
           abi: [{
@@ -623,10 +659,10 @@ const { data: usdcBalance } = useBalance({
           }],
           functionName: 'approveUSDCForPermit2'
         })
-        
+
         console.log('[ExecuteBid] Permit2 approval tx:', permit2ApproveHash)
         setSuccess('Approving Permit2 (one-time)...')
-        
+
         await publicClient.waitForTransactionReceipt({ hash: permit2ApproveHash })
         console.log('[ExecuteBid] Permit2 approved successfully')
       }
@@ -655,7 +691,7 @@ const { data: usdcBalance } = useBalance({
 
       console.log('[ExecuteBid] Transaction sent:', hash)
       setSuccess('Bid execution initiated...')
-      
+
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
       if (receipt.status === 'success') {
@@ -671,14 +707,14 @@ const { data: usdcBalance } = useBalance({
       }
     } catch (err: any) {
       console.error('[ExecuteBid] Error:', err)
-      
+
       let errorMessage = err?.message || 'Failed to execute bid'
-      
+
       if (err?.data) {
         console.log('[ExecuteBid] Revert data:', err.data)
         errorMessage = `Revert data: ${err.data}`
       }
-      
+
       if (err?.message?.includes('0x7939f424')) {
         errorMessage = 'TransferFromFailed - USDC transfer issue'
       } else if (err?.message?.includes('0xc8731608')) {
@@ -696,7 +732,7 @@ const { data: usdcBalance } = useBalance({
       } else if (err?.message?.includes('0xd81b2f2e')) {
         errorMessage = 'AllowanceExpired - Permit2 allowance issue'
       }
-      
+
       setLocalError(errorMessage)
     } finally {
       setExecutingBid(null)
@@ -736,7 +772,7 @@ const { data: usdcBalance } = useBalance({
   const availableAuctions = getAllAuctions().filter((a: any) => currentBlockNumber === 0 || a.endBlock > currentBlockNumber)
   const auctionSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.auctionSlice) : 0
   const idleSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.idleSlice) : 0
-  
+
   // Calculate APY earnings
   const investorAPYValue = (() => {
     if (!hookPoolInfo || !investorInfo) return 0
@@ -760,7 +796,7 @@ const { data: usdcBalance } = useBalance({
     if (ethPriceFeed) {
       return parseFloat(ethPriceFeed.price) * Math.pow(10, ethPriceFeed.expo)
     }
-    return 2000 // fallback
+    return 2000
   }, [pythPrices])
 
   const ethPrice = getEthPrice()
@@ -805,10 +841,10 @@ const { data: usdcBalance } = useBalance({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* User Guidance Section */}
-      <div style={{ 
-        padding: '12px', 
-        background: 'rgba(139,92,246,0.1)', 
-        borderRadius: '8px', 
+      <div style={{
+        padding: '12px',
+        background: 'rgba(139,92,246,0.1)',
+        borderRadius: '8px',
         border: '1px solid rgba(139,92,246,0.2)',
         fontSize: '12px',
         color: '#F8FAFC',
@@ -857,7 +893,7 @@ const { data: usdcBalance } = useBalance({
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
           {!isPoolInitialized && (
-            <button 
+            <button
               onClick={async () => {
                 try {
                   await createAngelPool();
@@ -867,13 +903,13 @@ const { data: usdcBalance } = useBalance({
                 } catch (err) {
                   console.error('Failed to initialize pool:', err);
                 }
-              }} 
+              }}
               disabled={loading}
-              style={{ 
-                ...btnPrimary, 
-                width: 'auto', 
-                padding: '8px 16px', 
-                fontSize: '12px', 
+              style={{
+                ...btnPrimary,
+                width: 'auto',
+                padding: '8px 16px',
+                fontSize: '12px',
                 opacity: loading ? 0.6 : 1,
                 background: 'linear-gradient(135deg, #10B981, #059669)'
               }}>
@@ -893,7 +929,7 @@ const { data: usdcBalance } = useBalance({
               ETH Price: ${ethPrice.toFixed(2)}
             </div>
           </div>
-          
+
           <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '12px' }}>
             <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Your Total Holdings</div>
             {investorInfo ? (
@@ -919,7 +955,7 @@ const { data: usdcBalance } = useBalance({
               <div style={{ color: '#64748B', fontSize: '14px' }}>Loading...</div>
             )}
           </div>
-          
+
           <div style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(99,102,241,0.08))', borderRadius: '8px', padding: '12px', border: '1px solid rgba(139,92,246,0.15)' }}>
             <div style={{ fontSize: '10px', color: '#94A3B8', marginBottom: '4px' }}>Pool Allocation</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1112,63 +1148,63 @@ const { data: usdcBalance } = useBalance({
                 const yesVotesNum = parseFloat(auction?.yesVotes || '0')
                 const noVotesNum = parseFloat(auction?.noVotes || '0')
                 const totalVotes = yesVotesNum + noVotesNum
-                
+
                 const yesPercent = totalVotes > 0 ? (yesVotesNum / totalVotes) * 100 : 0
                 const noPercent = totalVotes > 0 ? (noVotesNum / totalVotes) * 100 : 0
-                
+
                 const threshold = 60
                 const passed = yesPercent >= threshold
-                
+
                 const hasBid = auction?.bidId && auction.bidId !== '0' && auction.bidId !== '0x0'
                 const isExecuted = hasBid || !!auction?.isExecuted || auction?.status === 'executed'
                 const isActive = !!auction?.isActive
-                
+
                 const showVoteButtons = isActive && !isExecuted && !passed
                 const showExecuteButton = !isExecuted && passed
-                
+
                 let statusBadge = { text: '', color: '', background: '' }
                 if (isExecuted) {
-                  statusBadge = { 
-                    text: `✓ Executed${hasBid ? ` (Bid #${auction.bidId})` : ''}`, 
-                    color: '#A78BFA', 
-                    background: 'rgba(139,92,246,0.15)' 
+                  statusBadge = {
+                    text: `✓ Executed${hasBid ? ` (Bid #${auction.bidId})` : ''}`,
+                    color: '#A78BFA',
+                    background: 'rgba(139,92,246,0.15)'
                   }
                 } else if (passed) {
-                  statusBadge = { 
-                    text: '✓ READY TO EXECUTE', 
-                    color: '#4ADE80', 
-                    background: 'rgba(74,222,128,0.15)' 
+                  statusBadge = {
+                    text: '✓ READY TO EXECUTE',
+                    color: '#4ADE80',
+                    background: 'rgba(74,222,128,0.15)'
                   }
                 } else {
-                  statusBadge = { 
-                    text: 'VOTING', 
-                    color: '#FBBF24', 
-                    background: 'rgba(251,191,36,0.1)' 
+                  statusBadge = {
+                    text: 'VOTING',
+                    color: '#FBBF24',
+                    background: 'rgba(251,191,36,0.1)'
                   }
                 }
-                
-                const proposedAmountFormatted = auction?.proposedAmount 
-                  ? formatUnits(BigInt(auction.proposedAmount), 6) 
+
+                const proposedAmountFormatted = auction?.proposedAmount
+                  ? formatUnits(BigInt(auction.proposedAmount), 6)
                   : '0'
-                
+
                 return (
-                  <div key={idx} style={{ 
-                    background: '#1e1e2e', 
-                    borderRadius: '10px', 
-                    padding: '14px', 
+                  <div key={idx} style={{
+                    background: '#1e1e2e',
+                    borderRadius: '10px',
+                    padding: '14px',
                     border: passed && !isExecuted ? '1px solid rgba(74,222,128,0.3)' : '1px solid transparent'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                       <span style={{ fontSize: '11px', fontFamily: 'monospace', color: '#F8FAFC' }}>
                         {auction?.auctionAddress?.slice(0, 8)}...{auction?.auctionAddress?.slice(-4)}
                       </span>
-                      <span style={{ 
-                        fontSize: '9px', 
-                        padding: '3px 8px', 
+                      <span style={{
+                        fontSize: '9px',
+                        padding: '3px 8px',
                         borderRadius: '12px',
                         background: statusBadge.background,
-                        color: statusBadge.color, 
-                        fontWeight: 600 
+                        color: statusBadge.color,
+                        fontWeight: 600
                       }}>
                         {statusBadge.text}
                       </span>
@@ -1190,36 +1226,36 @@ const { data: usdcBalance } = useBalance({
 
                     {showVoteButtons && (
                       <div style={{ display: 'flex', gap: '6px', marginTop: '16px' }}>
-                        <button 
-                          onClick={() => handleVote(auction.auctionId, true)} 
+                        <button
+                          onClick={() => handleVote(auction.auctionId, true)}
                           disabled={loadingVote}
-                          style={{ 
-                            flex: 1, 
-                            padding: '10px', 
-                            background: 'linear-gradient(135deg, rgba(74,222,128,0.2), rgba(34,197,94,0.15))', 
-                            border: '1px solid rgba(74,222,128,0.3)', 
-                            borderRadius: '8px', 
-                            color: '#4ADE80', 
-                            fontSize: '13px', 
-                            fontWeight: 600, 
-                            cursor: 'pointer' 
+                          style={{
+                            flex: 1,
+                            padding: '10px',
+                            background: 'linear-gradient(135deg, rgba(74,222,128,0.2), rgba(34,197,94,0.15))',
+                            border: '1px solid rgba(74,222,128,0.3)',
+                            borderRadius: '8px',
+                            color: '#4ADE80',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: 'pointer'
                           }}
                         >
                           Vote YES
                         </button>
-                        <button 
-                          onClick={() => handleVote(auction.auctionId, false)} 
+                        <button
+                          onClick={() => handleVote(auction.auctionId, false)}
                           disabled={loadingVote}
-                          style={{ 
-                            flex: 1, 
-                            padding: '10px', 
-                            background: 'rgba(248,113,113,0.08)', 
-                            border: '1px solid rgba(248,113,113,0.2)', 
-                            borderRadius: '8px', 
-                            color: '#F87171', 
-                            fontSize: '13px', 
-                            fontWeight: 600, 
-                            cursor: 'pointer' 
+                          style={{
+                            flex: 1,
+                            padding: '10px',
+                            background: 'rgba(248,113,113,0.08)',
+                            border: '1px solid rgba(248,113,113,0.2)',
+                            borderRadius: '8px',
+                            color: '#F87171',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: 'pointer'
                           }}
                         >
                           Vote NO
@@ -1266,10 +1302,10 @@ const { data: usdcBalance } = useBalance({
       {activeSection === 'oracle' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {/* APY Disclaimer */}
-          <div style={{ 
-            padding: '12px', 
-            background: 'rgba(96,165,250,0.1)', 
-            borderRadius: '8px', 
+          <div style={{
+            padding: '12px',
+            background: 'rgba(96,165,250,0.1)',
+            borderRadius: '8px',
             border: '1px solid rgba(96,165,250,0.2)',
             fontSize: '11px',
             color: '#94A3B8',
@@ -1279,7 +1315,7 @@ const { data: usdcBalance } = useBalance({
               <span style={{ color: '#60A5FA', fontWeight: 600, fontSize: '12px' }}>ℹ️ How APY Works</span>
             </div>
             <div style={{ marginBottom: '6px' }}>
-              The 30% APY slice provides liquidity to the <strong>Uniswap v4 USDC/ETH pool</strong>. 
+              The 30% APY slice provides liquidity to the <strong>Uniswap v4 USDC/ETH pool</strong>.
               Every time someone trades on that pool, your hook captures <strong style={{ color: '#4ADE80' }}>0.05% fees</strong>.
             </div>
           </div>
@@ -1361,9 +1397,9 @@ const { data: usdcBalance } = useBalance({
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '11px', color: '#94A3B8' }}>
                   Total Fees Collected by Hook:
-                  <span 
-                    style={{ 
-                      marginLeft: '4px', 
+                  <span
+                    style={{
+                      marginLeft: '4px',
                       cursor: 'help',
                       borderBottom: '1px dotted #64748B'
                     }}
@@ -1462,9 +1498,9 @@ const { data: usdcBalance } = useBalance({
               <div style={{ padding: '12px', background: 'linear-gradient(135deg, rgba(74,222,128,0.08), rgba(34,197,94,0.06))', borderRadius: '10px', border: '1px solid rgba(74,222,128,0.15)' }}>
                 <div style={{ fontSize: '9px', color: '#64748B' }}>
                   Swap Fees Collected
-                  <span 
-                    style={{ 
-                      marginLeft: '4px', 
+                  <span
+                    style={{
+                      marginLeft: '4px',
                       cursor: 'help',
                       borderBottom: '1px dotted #64748B'
                     }}
@@ -1480,10 +1516,10 @@ const { data: usdcBalance } = useBalance({
             </div>
 
             {/* Live APY Updates */}
-            <div style={{ 
-              padding: '12px', 
-              background: 'rgba(74,222,128,0.06)', 
-              borderRadius: '8px', 
+            <div style={{
+              padding: '12px',
+              background: 'rgba(74,222,128,0.06)',
+              borderRadius: '8px',
               border: '1px solid rgba(74,222,128,0.2)',
               marginBottom: '12px'
             }}>
@@ -1492,7 +1528,7 @@ const { data: usdcBalance } = useBalance({
                 <span style={{ fontSize: '9px', color: '#64748B' }}>Auto-refreshes every 5s</span>
               </div>
               <div style={{ fontSize: '10px', color: '#94A3B8' }}>
-                Every swap through the Uniswap v4 pool adds 0.05% fees here. 
+                Every swap through the Uniswap v4 pool adds 0.05% fees here.
                 {totalSwapFees && parseFloat(totalSwapFees) > 0 ? (
                   <span style={{ color: '#4ADE80', display: 'block', marginTop: '4px' }}>
                     ✅ {parseFloat(totalSwapFees).toFixed(6)} USDC earned so far!

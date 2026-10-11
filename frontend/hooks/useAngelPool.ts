@@ -4,8 +4,8 @@ import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import { type Address, formatUnits } from 'viem'
 import { BrowserProvider, Contract, formatEther as ethersFormatEther } from 'ethers'
 import { retryWriteContract } from '@/lib/contract-interactions'
-import { 
-  NOVC_ANGEL_HOOK_ABI, 
+import {
+  NOVC_ANGEL_HOOK_ABI,
   CONTRACT_ADDRESSES,
   POOL_KEY,
   POOL_ID
@@ -63,20 +63,25 @@ export interface PreviewData {
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address
 const USDC_ADDRESS = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
 
+const MAX_UINT256 = (1n << 256n) - 1n
+const FAR_FUTURE = 4102444800 // Jan 1, 2100
+
 // Helper to decode revert reasons
 const decodeRevertReason = (error: any): string => {
   if (error?.reason) return error.reason
-  
+
   const revertData = error?.data || error?.info?.error?.data || error?.error?.data
   if (revertData) {
     const data = revertData.toString()
+    if (data.includes('No idle funds')) return 'No idle funds — deposit first, or the pool is already allocated.'
+
     if (data.includes('0x9ddc6f9e')) return 'Not enough auction funds'
     if (data.includes('0x5aabfefb')) return 'Voting period ended'
     if (data.includes('0xd9f31a6d')) return 'Already voted'
     if (data.includes('0x9b9cfe45')) return 'Insufficient voting power'
     if (data.includes('0x7939f424')) return 'Transfer failed'
     if (data.includes('0xc8731608')) return 'Insufficient allowance'
-    if (data.includes('0xfb8f41b2')) return 'Auction not started'
+    if (data.includes('0xfb8f41b2')) return 'USDC allowance too low — the hook needs approval to spend your USDC'
     if (data.includes('0xec5a2e1b')) return 'Auction ended'
     if (data.includes('0x584a7938')) return 'Bid too small'
     if (data.includes('0x1aab16b9')) return 'Price below floor'
@@ -94,6 +99,9 @@ const decodeRevertReason = (error: any): string => {
     if (data.includes('0xInsufficientPermit2Allowance')) return 'Permit2 allowance insufficient'
     if (data.includes('0xPermit2NotApproved')) return 'Permit2 not approved - one-time approval needed'
     if (data.includes('0xd81b2f2e')) return 'AllowanceExpired - Permit2 allowance has expired'
+    // OpenZeppelin ERC20InsufficientBalance
+    if (data.includes('0xe450d38c')) return 'USDC balance too low'
+    if (data.includes('0x96c6fd1e')) return 'USDC address is zero'
     if (data.includes('0x08c379a0')) {
       try {
         const abiCoder = new (require('ethers')).AbiCoder()
@@ -104,8 +112,9 @@ const decodeRevertReason = (error: any): string => {
       }
     }
   }
-  
+
   const msg = error?.message || ''
+  if (msg.includes('No idle funds')) return 'No idle funds — deposit first, or the pool is already allocated.'
   if (msg.includes('Not enough auction funds')) return 'Not enough auction funds'
   if (msg.includes('already voted')) return 'Already voted'
   if (msg.includes('voting ended')) return 'Voting period ended'
@@ -118,7 +127,7 @@ const decodeRevertReason = (error: any): string => {
   if (msg.includes('TotalValueMismatch')) return 'Accounting mismatch - call recoverAccounting()'
   if (msg.includes('PrecisionLoss')) return 'Math precision loss - cannot execute'
   if (msg.includes('TransferAmountMismatch')) return 'Transfer amount mismatch'
-  
+
   return msg || 'Transaction failed'
 }
 
@@ -150,14 +159,14 @@ const createHookContract = (signer: any) => {
 
 // Helper for retrying RPC calls
 const executeWithRetry = async <T>(
-  fn: () => Promise<T>, 
+  fn: () => Promise<T>,
   maxRetries = 3
 ): Promise<T> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn()
     } catch (err: any) {
-      const isRetryable = err.message?.includes('RPC') || 
+      const isRetryable = err.message?.includes('RPC') ||
                           err.code === 'CALL_EXCEPTION' ||
                           err.message?.includes('missing revert data') ||
                           err.message?.includes('network') ||
@@ -178,7 +187,7 @@ export function useAngelPool() {
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
-  
+
   const [hookContract, setHookContract] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -197,21 +206,17 @@ export function useAngelPool() {
           if (signer) {
             const contract = createHookContract(signer)
             setHookContract(contract)
-            
-            // Check if pool is initialized by calling poolId()
+
             try {
               const pid = await contract.poolId()
               console.log('[AngelPool] Contract poolId() returned:', pid?.toString())
-              
-              // Check if pool is initialized (non-zero bytes32)
+
               const isInit = pid && pid !== '0x0000000000000000000000000000000000000000000000000000000000000000'
               setIsPoolInitialized(!!isInit)
-              
+
               if (isInit) {
                 console.log('[AngelPool] Pool is initialized with ID:', pid.toString())
                 setPoolId(pid.toString())
-                
-                // Auto-refresh pool info
                 await refreshPoolInfo(contract)
                 await refreshInvestorInfo(contract)
               } else {
@@ -227,7 +232,7 @@ export function useAngelPool() {
         }
       }
     }
-    
+
     initContract()
   }, [walletClient, address])
 
@@ -235,9 +240,8 @@ export function useAngelPool() {
   const refreshPoolInfo = useCallback(async (contract?: any) => {
     const targetContract = contract || hookContract
     if (!targetContract) return
-    
+
     try {
-      // Check if pool is initialized first
       let pid
       try {
         pid = await targetContract.poolId()
@@ -246,16 +250,15 @@ export function useAngelPool() {
         setIsPoolInitialized(false)
         return
       }
-      
+
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
         console.log('[AngelPool] Pool not initialized in refresh')
         setIsPoolInitialized(false)
         return
       }
-      
+
       setIsPoolInitialized(true)
-      
-      // Get pool info
+
       const info = await targetContract.getPoolInfo()
       const infoArray = info as any[]
 
@@ -292,81 +295,73 @@ export function useAngelPool() {
     }
   }, [hookContract])
 
-// Refresh investor info - can be called with or without contract param
-const refreshInvestorInfo = useCallback(async (contract?: any) => {
-  const targetContract = contract || hookContract
-  if (!targetContract || !address) return
-  
-  try {
-    // Check if pool is initialized first
-    const pid = await targetContract.poolId()
-    if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
-      return
+  // Refresh investor info - can be called with or without contract param
+  const refreshInvestorInfo = useCallback(async (contract?: any) => {
+    const targetContract = contract || hookContract
+    if (!targetContract || !address) return
+
+    try {
+      const pid = await targetContract.poolId()
+      if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+        return
+      }
+
+      const info = await executeWithRetry(() => targetContract.getInvestorInfo(address))
+      const infoArray = info as any[]
+
+      const usdcRaw = BigInt(infoArray[0]?.toString() || '0')
+      const ethRaw = BigInt(infoArray[1]?.toString() || '0')
+      const shareRaw = BigInt(infoArray[2]?.toString() || '0')
+
+      // ===== DEBUG LOGGING (kept from original) =====
+      const poolInfo = await targetContract.getPoolInfo()
+      const poolInfoArray = poolInfo as any[]
+      const totalValue = poolInfoArray[0] ? BigInt(poolInfoArray[0].toString()) : 0n
+      const apySlice = poolInfoArray[1] ? BigInt(poolInfoArray[1].toString()) : 0n
+      const auctionSlice = poolInfoArray[2] ? BigInt(poolInfoArray[2].toString()) : 0n
+      const idleSlice = poolInfoArray[3] ? BigInt(poolInfoArray[3].toString()) : 0n
+      const activeLiquiditySlice = poolInfoArray[4] ? BigInt(poolInfoArray[4].toString()) : 0n
+
+      console.log('[AngelPool] Share calculation debug:', {
+        investorUSDC: formatUnits(usdcRaw, 6),
+        investorETH: ethersFormatEther(ethRaw),
+        investorTotal: (Number(formatUnits(usdcRaw, 6)) + (Number(ethersFormatEther(ethRaw)) * 2000)).toFixed(2),
+        shareRaw: shareRaw.toString(),
+        sharePercentage: (Number(shareRaw) / 100).toFixed(2) + '%',
+        totalPoolValue: formatUnits(totalValue, 6),
+        apySlice: formatUnits(apySlice, 6),
+        auctionSlice: formatUnits(auctionSlice, 6),
+        idleSlice: formatUnits(idleSlice, 6),
+        activeLiquiditySlice: formatUnits(activeLiquiditySlice, 6),
+        sumOfSlices: (Number(formatUnits(apySlice, 6)) +
+                      Number(formatUnits(auctionSlice, 6)) +
+                      Number(formatUnits(idleSlice, 6)) +
+                      Number(formatUnits(activeLiquiditySlice, 6))).toFixed(2)
+      })
+      // ===== END DEBUG LOGGING =====
+
+      const usdcFormatted = formatUnits(usdcRaw, 6)
+      const ethFormatted = ethersFormatEther(ethRaw)
+      const sharePercentage = (Number(shareRaw) / 100).toFixed(2) + '%'
+
+      console.log('[AngelPool] Investor info refreshed:', {
+        usdcContributed: usdcFormatted,
+        ethContributed: ethFormatted,
+        sharePercentage,
+        rawShare: shareRaw.toString()
+      })
+
+      setInvestorInfo({
+        usdcBalance: usdcFormatted,
+        ethBalance: ethFormatted,
+        sharePercentage,
+        activeLiquidity: infoArray[3]?.toString() || '0',
+        positionIds: (infoArray[4] as any[])?.map((id: any) => id?.toString() || '0') || []
+      })
+    } catch (err) {
+      console.error('[AngelPool] Failed to get investor info:', err)
     }
-    
-    const info = await executeWithRetry(() => targetContract.getInvestorInfo(address))
-    const infoArray = info as any[]
-    
-    const usdcRaw = BigInt(infoArray[0]?.toString() || '0')
-    const ethRaw = BigInt(infoArray[1]?.toString() || '0')
-    const shareRaw = BigInt(infoArray[2]?.toString() || '0')
-    
-    // ===== ADD DEBUG LOGGING HERE =====
-// Get full pool info to see all slices
-const poolInfo = await targetContract.getPoolInfo()
-const poolInfoArray = poolInfo as any[]
-const totalValue = poolInfoArray[0] ? BigInt(poolInfoArray[0].toString()) : 0n
-const apySlice = poolInfoArray[1] ? BigInt(poolInfoArray[1].toString()) : 0n
-const auctionSlice = poolInfoArray[2] ? BigInt(poolInfoArray[2].toString()) : 0n
-const idleSlice = poolInfoArray[3] ? BigInt(poolInfoArray[3].toString()) : 0n
-const activeLiquiditySlice = poolInfoArray[4] ? BigInt(poolInfoArray[4].toString()) : 0n
-
-console.log('[AngelPool] Share calculation debug:', {
-  investorUSDC: formatUnits(usdcRaw, 6),
-  investorETH: ethersFormatEther(ethRaw),
-  investorTotal: (Number(formatUnits(usdcRaw, 6)) + (Number(ethersFormatEther(ethRaw)) * 2000)).toFixed(2),
-  shareRaw: shareRaw.toString(),
-  sharePercentage: (Number(shareRaw) / 100).toFixed(2) + '%',
-  totalPoolValue: formatUnits(totalValue, 6),
-  apySlice: formatUnits(apySlice, 6),
-  auctionSlice: formatUnits(auctionSlice, 6),
-  idleSlice: formatUnits(idleSlice, 6),
-  activeLiquiditySlice: formatUnits(activeLiquiditySlice, 6),
-  sumOfSlices: (Number(formatUnits(apySlice, 6)) + 
-                Number(formatUnits(auctionSlice, 6)) + 
-                Number(formatUnits(idleSlice, 6)) + 
-                Number(formatUnits(activeLiquiditySlice, 6))).toFixed(2)
-})
-// ===== END DEBUG LOGGING =====
-    
-    const usdcFormatted = formatUnits(usdcRaw, 6)
-    const ethFormatted = ethersFormatEther(ethRaw)
-    
-    // IMPORTANT: The contract returns sharePercentage with 2 decimals
-    // Example: 20000 in contract = 200.00% in UI
-    const sharePercentage = (Number(shareRaw) / 100).toFixed(2) + '%'
-    
-    console.log('[AngelPool] Investor info refreshed:', {
-      usdcContributed: usdcFormatted,
-      ethContributed: ethFormatted,
-      sharePercentage,
-      rawShare: shareRaw.toString()
-    })
-
-    setInvestorInfo({
-      usdcBalance: usdcFormatted,
-      ethBalance: ethFormatted,
-      sharePercentage, // This is correct - uses the contract's value
-      activeLiquidity: infoArray[3]?.toString() || '0',
-      positionIds: (infoArray[4] as any[])?.map((id: any) => id?.toString() || '0') || []
-    })
-  } catch (err) {
-    console.error('[AngelPool] Failed to get investor info:', err)
-  }
-}, [hookContract, address])
-
-
-
+  }, [hookContract, address])
 
   // Auto-refresh when contract changes
   useEffect(() => {
@@ -379,7 +374,7 @@ console.log('[AngelPool] Share calculation debug:', {
   // Check Permit2 approval status
   const checkPermit2Approval = useCallback(async () => {
     if (!hookContract || !address) return
-    
+
     try {
       const approved = await executeWithRetry(() => hookContract.isPermit2Approved(address))
       setPermit2Approved(approved === true)
@@ -403,13 +398,13 @@ console.log('[AngelPool] Share calculation debug:', {
   // Check auction slice balance
   const checkAuctionSliceBalance = useCallback(async () => {
     if (!hookContract || !isPoolInitialized) return null
-    
+
     try {
       const poolInfo = await hookContract.getPoolInfo()
       const poolInfoArray = poolInfo as any[]
       const auctionSlice = poolInfoArray[2] ? BigInt(poolInfoArray[2].toString()) : 0n
       const auctionSliceUSDC = formatUnits(auctionSlice, 6)
-      
+
       console.log('[AngelPool] Auction slice balance:', auctionSliceUSDC, 'USDC')
       return auctionSliceUSDC
     } catch (err) {
@@ -421,8 +416,7 @@ console.log('[AngelPool] Share calculation debug:', {
   // Create Angel Pool
   const createAngelPool = useCallback(async () => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if already initialized
+
     try {
       const pid = await hookContract.poolId()
       if (pid && pid !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -435,40 +429,37 @@ console.log('[AngelPool] Share calculation debug:', {
     } catch (err) {
       // Pool not initialized, continue
     }
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       console.log('[AngelPool] Creating pool...')
-      
+
       const tx = await hookContract.createAngelPool({
         gasLimit: 500000n
       })
-      
+
       console.log('[AngelPool] Pool creation tx:', tx.hash)
-      
+
       const receipt = await tx.wait()
-      
+
       if (receipt.status === 0) {
         throw new Error('Pool creation reverted on-chain')
       }
-      
-      // Get the new pool ID
+
       const pid = await hookContract.poolId()
       setIsPoolInitialized(true)
       setPoolId(pid.toString())
-      
+
       await refreshPoolInfo()
       await refreshInvestorInfo()
-      
+
       console.log('[AngelPool] Pool created successfully with ID:', pid.toString())
       return pid.toString()
-      
     } catch (err: any) {
       console.error('[AngelPool] Failed to create pool:', err)
-      
-      // Check if error is "Pool already created"
+
       if (err?.message?.includes('Pool already created') || err?.data?.includes('Pool already created')) {
         console.log('[AngelPool] Pool already exists, updating state')
         setIsPoolInitialized(true)
@@ -476,7 +467,7 @@ console.log('[AngelPool] Share calculation debug:', {
         await refreshInvestorInfo()
         return
       }
-      
+
       setError(decodeRevertReason(err))
       throw err
     } finally {
@@ -484,126 +475,116 @@ console.log('[AngelPool] Share calculation debug:', {
     }
   }, [hookContract, refreshPoolInfo, refreshInvestorInfo])
 
-  // Deposit USDC 
-const depositUSDC = useCallback(async (amount: string) => {
-  if (!hookContract) throw new Error('Contract not initialized')
-  if (!walletClient) throw new Error('Wallet not connected')
-  if (!publicClient) throw new Error('Public client not available')
-  if (!isPoolInitialized) throw new Error('Pool not initialized. Call createAngelPool() first')
+  const depositUSDC = useCallback(async (amount: string) => {
+    if (!hookContract) throw new Error('Contract not initialized')
+    if (!walletClient) throw new Error('Wallet not connected')
+    if (!publicClient) throw new Error('Public client not available')
+    if (!isPoolInitialized) throw new Error('Pool not initialized. Call createAngelPool() first')
+    setLoading(true)
+    setError(null)
 
-  setLoading(true)
-  setError(null)
-
-  try {
-    const amountWei = BigInt(amount)
-    const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
-    const usdcAddress = USDC_ADDRESS   // ✅ USE THE HOOK'S USDC
-    const userAddress = walletClient.account.address
-
-    // 1. Balance check against the correct USDC
-    const balance = await publicClient.readContract({
-      address: usdcAddress,
-      abi: [{ name:'balanceOf', type:'function', stateMutability:'view',
-              inputs:[{name:'account',type:'address'}],
-              outputs:[{name:'',type:'uint256'}] }],
-      functionName: 'balanceOf',
-      args: [userAddress],
-    }) as bigint
-    console.log('[AngelPool] USDC balance:', formatUnits(balance, 6))
-
-    if (balance < amountWei) {
-      throw new Error(`Insufficient USDC balance. Have ${formatUnits(balance, 6)}, need ${formatUnits(amountWei, 6)}`)
-    }
-
-    // 2. Direct ERC20 allowance check — hook uses transferFrom, NOT Permit2
-    const allowance = await publicClient.readContract({
-      address: usdcAddress,
-      abi: [{ name:'allowance', type:'function', stateMutability:'view',
-              inputs:[{name:'owner',type:'address'},{name:'spender',type:'address'}],
-              outputs:[{name:'',type:'uint256'}] }],
-      functionName: 'allowance',
-      args: [userAddress, hookAddress],
-    }) as bigint
-    console.log('[AngelPool] Current allowance hook ← user:', formatUnits(allowance, 6))
-
-    // 3. Approve hook directly if needed
-    if (allowance < amountWei) {
-      console.log('[AngelPool] Approving USDC → hook ...')
-      const approveHash = await walletClient.writeContract({
-        address: usdcAddress,
-        abi: [{ name:'approve', type:'function', stateMutability:'nonpayable',
-                inputs:[{name:'spender',type:'address'},{name:'amount',type:'uint256'}],
-                outputs:[{name:'',type:'bool'}] }],
-        functionName: 'approve',
-        args: [hookAddress, (1n << 256n) - 1n],   // max — one-time per user
-        chain: walletClient.chain,
-        account: userAddress,
-      })
-      console.log('[AngelPool] Approve tx:', approveHash)
-
-      const rc = await publicClient.waitForTransactionReceipt({ hash: approveHash, confirmations: 1 })
-      if (rc.status !== 'success') throw new Error('USDC approve tx reverted')
-
-      // re-read allowance to confirm it landed
-      const newAllowance = await publicClient.readContract({
-        address: usdcAddress,
-        abi: [{ name:'allowance', type:'function', stateMutability:'view',
-                inputs:[{name:'owner',type:'address'},{name:'spender',type:'address'}],
-                outputs:[{name:'',type:'uint256'}] }],
-        functionName: 'allowance',
-        args: [userAddress, hookAddress],
-      }) as bigint
-      console.log('[AngelPool] New allowance:', formatUnits(newAllowance, 6))
-      if (newAllowance < amountWei) throw new Error('Allowance did not update')
-
-      // give RPC a beat on Monad
-      await new Promise(r => setTimeout(r, 2000))
-    }
-
-    // 4. Simulate deposit against the correct USDC state
     try {
-      await publicClient.simulateContract({
+      const amountWei = BigInt(amount)
+      const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
+      const usdcAddress = USDC_ADDRESS
+      const userAddress = walletClient.account.address
+
+      // Read balance on the correct USDC
+      const balance = await publicClient.readContract({
+        address: usdcAddress,
+        abi: [{ name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
+        functionName: 'balanceOf',
+        args: [userAddress]
+      }) as bigint
+      console.log('[AngelPool] User USDC balance:', formatUnits(balance, 6))
+
+      if (balance < amountWei) {
+        throw new Error(`Insufficient USDC balance`)
+      }
+
+      const currentAllowance = await publicClient.readContract({
+        address: usdcAddress,
+        abi: [{ name: 'allowance', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
+        functionName: 'allowance',
+        args: [userAddress, hookAddress]
+      }) as bigint
+      console.log('[AngelPool] Current USDC allowance:', formatUnits(currentAllowance, 6))
+
+      if (currentAllowance < amountWei) {
+        console.log('[AngelPool] Approving USDC via writeContract...')
+        const approveHash = await walletClient.writeContract({
+          address: usdcAddress,
+          abi: [{ name: 'approve', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ name: '', type: 'bool' }] }],
+          functionName: 'approve',
+          args: [hookAddress, MAX_UINT256],
+          chain: walletClient.chain,
+          account: userAddress,
+        })
+        console.log('[AngelPool] Approval tx:', approveHash)
+        const approveRc = await publicClient.waitForTransactionReceipt({ hash: approveHash, confirmations: 1 })
+        if (approveRc.status !== 'success') throw new Error('USDC approve tx reverted')
+
+        const postApproveAllowance = await publicClient.readContract({
+          address: usdcAddress,
+          abi: [{ name: 'allowance', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
+          functionName: 'allowance',
+          args: [userAddress, hookAddress]
+        }) as bigint
+        console.log('[AngelPool] Post-approve allowance:', formatUnits(postApproveAllowance, 6))
+        if (postApproveAllowance < amountWei) {
+          throw new Error('Allowance did not update after approve')
+        }
+
+        console.log('[AngelPool] USDC approved')
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
+
+      console.log('[AngelPool] Depositing USDC...')
+      try {
+        await publicClient.simulateContract({
+          address: hookAddress,
+          abi: NOVC_ANGEL_HOOK_ABI,
+          functionName: 'depositUSDC',
+          args: [amountWei],
+          account: userAddress,
+        })
+      } catch (simErr: any) {
+        console.error('[AngelPool] Deposit simulation failed:', simErr)
+        throw new Error(decodeRevertReason(simErr) || 'Deposit would fail on-chain. Check pool status and USDC balance.')
+      }
+      const depositHash = await retryWriteContract(walletClient, {
         address: hookAddress,
         abi: NOVC_ANGEL_HOOK_ABI,
         functionName: 'depositUSDC',
         args: [amountWei],
+        chain: walletClient.chain,
         account: userAddress,
-      })
-    } catch (simErr: any) {
-      console.error('[AngelPool] Deposit simulation failed:', simErr)
-      throw new Error(decodeRevertReason(simErr) || 'Deposit would fail on-chain')
+        gas: 500000n,
+      }, 'depositUSDC')
+
+      console.log('[AngelPool] Deposit tx:', depositHash)
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash, confirmations: 1 })
+
+      if (receipt.status !== 'success') {
+        throw new Error('Deposit reverted on-chain')
+      }
+
+      console.log('[AngelPool] Deposit confirmed')
+      await refreshPoolInfo()
+      await refreshInvestorInfo()
+    } catch (err: any) {
+      console.error('[AngelPool] Deposit failed:', err)
+      setError(decodeRevertReason(err))
+      throw err
+    } finally {
+      setLoading(false)
     }
-
-    // 5. Execute deposit
-    const depositHash = await retryWriteContract(walletClient, {
-      address: hookAddress,
-      abi: NOVC_ANGEL_HOOK_ABI,
-      functionName: 'depositUSDC',
-      args: [amountWei],
-      chain: walletClient.chain,
-      account: userAddress,
-      gas: 500000n,
-    }, 'depositUSDC')
-
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash, confirmations: 1 })
-    if (receipt.status !== 'success') throw new Error('Deposit reverted on-chain')
-
-    await refreshPoolInfo()
-    await refreshInvestorInfo()
-  } catch (err: any) {
-    console.error('[AngelPool] Deposit failed:', err)
-    setError(decodeRevertReason(err))
-    throw err
-  } finally {
-    setLoading(false)
-  }
-}, [hookContract, walletClient, publicClient, isPoolInitialized, refreshPoolInfo, refreshInvestorInfo])
+  }, [hookContract, walletClient, publicClient, isPoolInitialized, refreshPoolInfo, refreshInvestorInfo])
 
   // Deposit ETH
   const depositETH = useCallback(async (amount: string) => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -612,7 +593,7 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized. Call createAngelPool() first')
     }
-    
+
     setLoading(true)
     setError(null)
     try {
@@ -654,8 +635,7 @@ const depositUSDC = useCallback(async (amount: string) => {
   // Withdraw USDC
   const withdrawUSDC = useCallback(async (amount: string) => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -664,7 +644,7 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized')
     }
-    
+
     setLoading(true)
     setError(null)
     try {
@@ -676,7 +656,7 @@ const depositUSDC = useCallback(async (amount: string) => {
         throw new Error(`Insufficient USDC in pool. Available: ${formatUnits(availableUSDC, 6)} USDC`)
       }
       if (requestedAmount === 0n) throw new Error('Amount must be greater than 0')
-      
+
       console.log('[AngelPool] Withdrawing USDC...')
       const tx = await hookContract.withdrawUSDC(requestedAmount, { gasLimit: 800000n })
       console.log('[AngelPool] Withdraw tx:', tx.hash)
@@ -703,8 +683,7 @@ const depositUSDC = useCallback(async (amount: string) => {
   // Withdraw ETH
   const withdrawETH = useCallback(async (amount: string) => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -713,7 +692,7 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized')
     }
-    
+
     setLoading(true)
     setError(null)
     try {
@@ -725,7 +704,7 @@ const depositUSDC = useCallback(async (amount: string) => {
         throw new Error(`Insufficient ETH in pool. Available: ${formatUnits(availableETH, 18)} ETH`)
       }
       if (requestedAmount === 0n) throw new Error('Amount must be greater than 0')
-      
+
       console.log('[AngelPool] Withdrawing ETH...')
       const tx = await hookContract.withdrawETH(requestedAmount, { gasLimit: 800000n })
       console.log('[AngelPool] Withdraw tx:', tx.hash)
@@ -749,13 +728,29 @@ const depositUSDC = useCallback(async (amount: string) => {
     }
   }, [hookContract, refreshPoolInfo, refreshInvestorInfo, address])
 
-  // Allocate Slices
+  // ✅ FIX: Allocate Slices — short-circuit when idle is zero.
+  // The deposit auto-allocation in the dashboard drains idle to 0; calling
+  // allocateSlices again reverts with "No idle funds". We now check first.
   const allocateSlices = useCallback(async () => {
     if (!hookContract) throw new Error('Contract not initialized')
     if (!isPoolInitialized) throw new Error('Pool not initialized. Call createAngelPool() first')
     setLoading(true)
     setError(null)
     try {
+      // ✅ FIX: pre-flight read of idle — if it is 0, do nothing.
+      try {
+        const poolInfo = await hookContract.getPoolInfo()
+        const poolInfoArray = poolInfo as any[]
+        const idleRaw = BigInt(poolInfoArray[3]?.toString() || '0')
+        if (idleRaw === 0n) {
+          console.log('[AngelPool] allocateSlices skipped — idle is already 0')
+          return
+        }
+      } catch (e) {
+        // if the read fails, fall through and let simulateContract decide
+        console.log('[AngelPool] Could not pre-read idle; continuing', e)
+      }
+
       console.log('[AngelPool] Allocating slices...')
       const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
       const userAddress = walletClient!.account.address
@@ -794,18 +789,18 @@ const depositUSDC = useCallback(async (amount: string) => {
     } finally {
       setLoading(false)
     }
-  }, [hookContract, isPoolInitialized, refreshPoolInfo])
+  }, [hookContract, isPoolInitialized, walletClient, publicClient, refreshPoolInfo])
 
   // Recover Accounting
   const recoverAccounting = useCallback(async () => {
     if (!walletClient || !publicClient) throw new Error('Wallet not connected')
     if (!isPoolInitialized) throw new Error('Pool not initialized')
-    
+
     setLoading(true)
     setError(null)
     const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
     const userAddress = walletClient.account.address
-    
+
     try {
       console.log('[AngelPool] Recovering accounting...')
       const recoverHash = await retryWriteContract(walletClient, {
@@ -834,11 +829,10 @@ const depositUSDC = useCallback(async (amount: string) => {
     }
   }, [walletClient, publicClient, isPoolInitialized, refreshPoolInfo, refreshInvestorInfo])
 
-  // Approve USDC for Permit2 (one-time)
+  // Approve USDC for Permit2 (one-time, hook-side helper)
   const approveUSDCForPermit2 = useCallback(async () => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -847,10 +841,10 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized')
     }
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       console.log('[AngelPool] Approving USDC for Permit2...')
       const tx = await hookContract.approveUSDCForPermit2({
@@ -872,38 +866,36 @@ const depositUSDC = useCallback(async (amount: string) => {
     }
   }, [hookContract])
 
-  // Approve auction via Permit2 (personal approval)
+  // ✅ FIX: use the hook's USDC for the Permit2 token argument.
   const approvePersonalAuctionViaPermit2 = useCallback(async (
     auctionAddress: Address,
     amount: bigint
   ) => {
     if (!walletClient) throw new Error('Wallet not connected')
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       console.log('[AngelPool] Approving personal auction via Permit2:', { auctionAddress, amount: amount.toString() })
-      
+
       const signer = await getEthersSigner(walletClient)
       if (!signer) throw new Error('No signer available')
-      
+
       const permit2Contract = new Contract(
         PERMIT2_ADDRESS,
         ['function approve(address token, address spender, uint160 amount, uint48 expiration) external'],
         signer
       )
-      
-      const FAR_FUTURE = 4102444800 // Jan 1 2100
-      
+
       const tx = await permit2Contract.approve(
-        CONTRACT_ADDRESSES.USDC,
+        USDC_ADDRESS,   
         auctionAddress,
         amount,
         FAR_FUTURE,
         { gasLimit: 200000n }
       )
-      
+
       console.log('[AngelPool] Personal approval tx:', tx.hash)
       const receipt = await tx.wait()
       if (receipt.status === 0) {
@@ -926,21 +918,19 @@ const depositUSDC = useCallback(async (amount: string) => {
   ) => {
     if (!hookContract) throw new Error('Contract not initialized')
     if (!isPoolInitialized) throw new Error('Pool not initialized')
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       console.log('[AngelPool] Approving hook auction via Permit2:', { auctionAddress, amount: amount.toString() })
-      
-      const FAR_FUTURE = 4102444800 // Jan 1 2100
-      
+
       const tx = await hookContract.approveAuctionViaPermit2(
         auctionAddress,
         amount,
         FAR_FUTURE
       )
-      
+
       console.log('[AngelPool] Hook approval tx:', tx.hash)
       const receipt = await tx.wait()
       if (receipt.status === 0) {
@@ -962,12 +952,12 @@ const depositUSDC = useCallback(async (amount: string) => {
       console.log('[AngelPool] Contract not initialized for preview')
       return null
     }
-    
+
     try {
       console.log(`[AngelPool] Previewing execute auction ${auctionId}...`)
       const preview = await hookContract.previewExecuteAuction(auctionId)
       const previewArray = preview as any[]
-      
+
       const data = {
         proposedAmount: formatUnits(previewArray[0]?.toString() || '0', 6),
         floorPrice: previewArray[1]?.toString() || '0',
@@ -982,14 +972,14 @@ const depositUSDC = useCallback(async (amount: string) => {
         auctionEndBlock: previewArray[10]?.toString() || '0',
         isActive: previewArray[11] === true
       }
-      
+
       console.log('[AngelPool] Preview data:', {
         ...data,
         tokenAmountMicro: data.tokenAmountMicro,
         verifyAmountMicro: data.verifyAmountMicro,
         match: data.tokenAmountMicro === data.verifyAmountMicro ? '✅' : '❌'
       })
-      
+
       return data
     } catch (err) {
       console.error('[AngelPool] Preview failed:', err)
@@ -1000,8 +990,7 @@ const depositUSDC = useCallback(async (amount: string) => {
   // Propose Auction
   const proposeAuction = useCallback(async (auctionAddress: Address, amount: string, maxPrice: string) => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -1010,39 +999,39 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized. Call createAngelPool() first')
     }
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       await refreshPoolInfo()
-      
+
       const amountWei = BigInt(amount)
       const amountInUSDC = Number(formatUnits(amountWei, 6))
-      
-      console.log('[AngelPool] Proposing auction:', { 
-        auctionAddress, 
+
+      console.log('[AngelPool] Proposing auction:', {
+        auctionAddress,
         amountWei: amountWei.toString(),
         amountInUSDC,
-        maxPrice 
+        maxPrice
       })
-      
+
       if (!poolInfoState) {
         throw new Error('Pool info not available')
       }
-      
+
       const auctionSliceNum = parseFloat(poolInfoState.auctionSlice)
-      
+
       if (amountInUSDC > auctionSliceNum) {
         throw new Error(`Not enough auction funds. Available: $${auctionSliceNum.toFixed(2)} USDC, Requested: $${amountInUSDC.toFixed(2)} USDC`)
       }
-      
+
       if (amountInUSDC <= 0) {
         throw new Error('Amount must be greater than 0')
       }
-      
+
       console.log('[AngelPool] Sending propose transaction with amount:', amountWei.toString())
-      
+
       const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
       const userAddress = walletClient!.account.address
       const proposeHash = await retryWriteContract(walletClient!, {
@@ -1054,15 +1043,15 @@ const depositUSDC = useCallback(async (amount: string) => {
         account: userAddress,
         gas: 500000n,
       }, 'proposeAuctionInvestment')
-      
+
       console.log('[AngelPool] Proposal tx sent:', proposeHash)
-      
+
       const receipt = await publicClient!.waitForTransactionReceipt({ hash: proposeHash, confirmations: 1 })
-      
+
       if (receipt.status !== 'success') {
         throw new Error('Proposal transaction reverted on-chain')
       }
-      
+
       let auctionId = null
       if (receipt.logs && receipt.logs.length > 0) {
         for (const log of receipt.logs) {
@@ -1075,7 +1064,7 @@ const depositUSDC = useCallback(async (amount: string) => {
           }
         }
       }
-      
+
       if (!auctionId && hookContract) {
         try {
           const investments = await hookContract.getPoolAuctionInvestments()
@@ -1087,19 +1076,18 @@ const depositUSDC = useCallback(async (amount: string) => {
           console.log('[AngelPool] Could not fetch latest investments')
         }
       }
-      
+
       console.log('[AngelPool] Proposal confirmed, auction ID:', auctionId || 'unknown')
       console.log('[AngelPool] IMPORTANT: Funds will only be transferred when vote threshold (60%) is reached')
-      
+
       await refreshPoolInfo()
-      
+
       return auctionId || '0'
-      
     } catch (err: any) {
       console.error('[AngelPool] Proposal failed:', err)
-      
+
       let errorMsg = err?.reason || err?.message || 'Proposal failed'
-      
+
       if (errorMsg.includes('Not enough auction funds')) {
         errorMsg = err.message
       } else if (errorMsg.includes('user rejected')) {
@@ -1111,19 +1099,18 @@ const depositUSDC = useCallback(async (amount: string) => {
       } else if (errorMsg.includes('TotalValueMismatch')) {
         errorMsg = 'Accounting mismatch - please recover accounting first'
       }
-      
+
       setError(errorMsg)
       throw new Error(errorMsg)
     } finally {
       setLoading(false)
     }
-  }, [hookContract, refreshPoolInfo, poolInfoState])
+  }, [hookContract, refreshPoolInfo, poolInfoState, walletClient, publicClient])
 
   // Vote on Auction
   const voteOnAuction = useCallback(async (auctionId: number, voteFor: boolean) => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -1132,32 +1119,32 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized. Call createAngelPool() first')
     }
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       console.log(`[AngelPool] Voting ${voteFor ? 'YES' : 'NO'} on auction ${auctionId}`)
-      
+
       await refreshInvestorInfo()
-      
+
       if (!investorInfo) {
         throw new Error('Investor info not available')
       }
-      
+
       const usdcContributed = parseFloat(investorInfo.usdcBalance)
       const ethContributed = parseFloat(investorInfo.ethBalance)
-      
+
       console.log('[AngelPool] Investor contribution:', {
         usdcContributed,
         ethContributed,
         sharePercentage: investorInfo.sharePercentage
       })
-      
+
       if (usdcContributed <= 0 && ethContributed <= 0) {
         throw new Error('You must deposit funds to the pool before voting')
       }
-      
+
       let auctionDetails
       try {
         auctionDetails = await hookContract.getAuctionDetails(auctionId)
@@ -1169,11 +1156,11 @@ const depositUSDC = useCallback(async (amount: string) => {
           noVotes: auctionArray[6]?.toString(),
           deadline: auctionArray[7]?.toString()
         })
-        
+
         if (!auctionArray[4]) {
           throw new Error('Voting period has ended for this proposal')
         }
-        
+
         const deadline = Number(auctionArray[7]?.toString() || '0')
         if (deadline > 0 && Date.now() / 1000 > deadline) {
           throw new Error('Voting deadline has passed')
@@ -1181,34 +1168,33 @@ const depositUSDC = useCallback(async (amount: string) => {
       } catch (err) {
         console.log('[AngelPool] Could not fetch auction details')
       }
-      
+
       console.log('[AngelPool] Sending vote transaction...')
-      
+
       const tx = await hookContract.voteOnAuction(auctionId, voteFor, {
         gasLimit: 500000n
       })
-      
+
       console.log('[AngelPool] Vote tx sent:', tx.hash)
-      
+
       const receipt = await tx.wait()
-      
+
       if (receipt.status === 0) {
         throw new Error('Transaction reverted on-chain')
       }
-      
+
       console.log('[AngelPool] Vote confirmed:', receipt.hash)
-      
+
       await new Promise(resolve => setTimeout(resolve, 2000))
-      
+
       await refreshInvestorInfo()
-      
+
       return true
-      
     } catch (err: any) {
       console.error('[AngelPool] Vote failed:', err)
-      
+
       let errorMsg = err?.message || 'Vote failed'
-      
+
       if (errorMsg.includes('0x7939f424') || errorMsg.includes('TransferFromFailed')) {
         errorMsg = '⚠️ You need to have USDC deposited in the pool to vote. Please deposit USDC first.'
       } else if (errorMsg.includes('0x5aabfefb') || errorMsg.includes('voting ended')) {
@@ -1228,7 +1214,7 @@ const depositUSDC = useCallback(async (amount: string) => {
       } else if (errorMsg.includes('PrecisionLoss')) {
         errorMsg = 'Math precision loss - cannot execute this auction'
       }
-      
+
       setError(errorMsg)
       throw new Error(errorMsg)
     } finally {
@@ -1239,8 +1225,7 @@ const depositUSDC = useCallback(async (amount: string) => {
   // Execute Auction
   const executeAuction = useCallback(async (auctionId: number) => {
     if (!hookContract) throw new Error('Contract not initialized')
-    
-    // Check if pool is initialized
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
@@ -1249,29 +1234,29 @@ const depositUSDC = useCallback(async (amount: string) => {
     } catch (err) {
       throw new Error('Pool not initialized')
     }
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       console.log('[AngelPool] Executing auction:', auctionId)
-      
+
       const preview = await previewExecuteAuction(auctionId)
       if (preview && !preview.mathValid) {
         console.warn('[AngelPool] ⚠️ Preview shows math invalid!', preview)
       }
-      
+
       const tx = await hookContract.executeAuction(auctionId, {
         gasLimit: 800000n
       })
-      
+
       console.log('[AngelPool] Execute tx:', tx.hash)
       const receipt = await tx.wait()
       if (receipt.status === 0) {
         throw new Error('Execution reverted on-chain')
       }
       console.log('[AngelPool] Execute confirmed')
-      
+
       await refreshPoolInfo()
       return `bid-${auctionId}-${Date.now()}`
     } catch (err: any) {
@@ -1289,12 +1274,12 @@ const depositUSDC = useCallback(async (amount: string) => {
     try {
       const investment = await hookContract.auctionInvestments(auctionId)
       const investmentArray = investment as any[]
-      
+
       if (!investmentArray || investmentArray[0] === 0n) {
         console.log(`[AngelPool] Auction ${auctionId} not found in contract`)
         return null
       }
-      
+
       console.log('[AngelPool] Raw investment:', {
         auctionId: investmentArray[0]?.toString(),
         auctionAddress: investmentArray[1],
@@ -1303,18 +1288,18 @@ const depositUSDC = useCallback(async (amount: string) => {
         yesVotes: investmentArray[11]?.toString(),
         noVotes: investmentArray[12]?.toString()
       })
-      
+
       const yesVotesRaw = Number(investmentArray[11]?.toString() || '0')
       const noVotesRaw = Number(investmentArray[12]?.toString() || '0')
-      
+
       const yesVotes = (yesVotesRaw / 100).toFixed(2)
       const noVotes = (noVotesRaw / 100).toFixed(2)
-      
+
       const proposedAmount = investmentArray[3]?.toString() || '0'
       const isActive = investmentArray[7] === true
       const isExecuted = investmentArray[8] === true
       const hasBid = investmentArray[6] && investmentArray[6].toString() !== '0'
-      
+
       console.log('[AngelPool] Processed auction:', {
         auctionId,
         proposedAmount,
@@ -1324,7 +1309,7 @@ const depositUSDC = useCallback(async (amount: string) => {
         yesVotes,
         noVotes
       })
-      
+
       return {
         auctionId,
         auctionAddress: investmentArray[1] as Address,
@@ -1354,12 +1339,12 @@ const depositUSDC = useCallback(async (amount: string) => {
       console.log('[AngelPool] Contract not initialized, cannot fetch investments')
       return []
     }
-    
+
     try {
       const investments = await executeWithRetry(() => hookContract.getPoolAuctionInvestments())
       const investmentsArray = (investments as any[]) || []
       console.log('[AngelPool] Raw pool investments:', investmentsArray.map((id: any) => id?.toString() || '0'))
-      
+
       return investmentsArray
         .map((id: any) => Number(id?.toString() || '0'))
         .filter((id: number) => id > 0)
@@ -1369,25 +1354,25 @@ const depositUSDC = useCallback(async (amount: string) => {
     }
   }, [hookContract])
 
-  // Get Pool Bids
+  // ✅ FIX: Get Pool Bids — restored from the original file.
   const getPoolBids = useCallback(async (auctionAddress: Address) => {
     if (!hookContract) {
       console.log('[AngelPool] Contract not initialized for getPoolBids')
       return []
     }
-    
+
     try {
       const pid = await hookContract.poolId()
       if (!pid || pid === '0x0000000000000000000000000000000000000000000000000000000000000000') {
         console.log('[AngelPool] Pool not initialized, no bids')
         return []
       }
-      
+
       console.log('[AngelPool] Fetching pool bids for auction:', auctionAddress)
       const bids = await hookContract.getPoolBids(auctionAddress)
-      
+
       if (!bids) return []
-      
+
       const bidsArray = bids as any[]
       return bidsArray.map((bid: any, index: number) => ({
         id: bid?.toString?.() || index.toString(),
@@ -1417,7 +1402,7 @@ const depositUSDC = useCallback(async (amount: string) => {
     isPoolInitialized,
     permit2Approved,
 
-    // Actions 
+    // Actions
     createAngelPool,
     depositUSDC,
     depositETH,
@@ -1430,7 +1415,7 @@ const depositUSDC = useCallback(async (amount: string) => {
     proposeAuction,
     voteOnAuction,
     executeAuction,
-    
+
     // View functions
     refreshPoolInfo,
     refreshInvestorInfo,
