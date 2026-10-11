@@ -1363,7 +1363,7 @@ export function AngelPoolDashboard() {
                 {swapError}
                 {swapTxHash && (
                   <div style={{ marginTop: '4px' }}>
-                    <a href={`https://sepolia.uniscan.xyz/tx/${swapTxHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', textDecoration: 'underline' }}>
+                    <a href={`https://testnet.monadscan.com/tx/${swapTxHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', textDecoration: 'underline' }}>
                       View Transaction ↗
                     </a>
                   </div>
@@ -1373,7 +1373,7 @@ export function AngelPoolDashboard() {
 
             {swapTxHash && !swapError && (
               <div style={{ padding: '8px', background: 'rgba(34,197,94,0.1)', borderRadius: '6px', fontSize: '11px', color: '#4ADE80', marginBottom: '12px' }}>
-                <a href={`https://sepolia.uniscan.xyz/tx/${swapTxHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#4ADE80', textDecoration: 'underline' }}>
+                <a href={`https://testnet.monadscan.com/tx/${swapTxHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#4ADE80', textDecoration: 'underline' }}>
                   View Transaction ↗
                 </a>
               </div>

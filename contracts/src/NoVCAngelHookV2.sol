@@ -18,13 +18,13 @@ interface IPermit2 {
         uint48 expiration;
         uint48 nonce;
     }
-    
+
     struct PermitSingle {
         PermitDetails details;
         address spender;
         uint256 sigDeadline;
     }
-    
+
     function permit(address owner, PermitSingle calldata permitSingle, bytes calldata signature) external;
     function transferFrom(address from, address to, uint160 amount, address token) external;
     function allowance(address owner, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce);
@@ -49,14 +49,14 @@ interface IContinuousClearingAuction {
         uint256 _prevTickPrice,
         bytes calldata _hookData
     ) external payable returns (uint256);
-    
+
     function submitBid(
         uint256 _maxPrice,
         uint128 _amount,
         address _owner,
         bytes calldata _hookData
     ) external payable returns (uint256);
-    
+
     function exitBid(uint256 bidId) external;
     function claimTokens(uint256 bidId) external;
     function clearingPrice() external view returns (uint256);
@@ -104,14 +104,14 @@ abstract contract BaseHookMinimal {
 
     constructor(IPoolManager _poolManager) {
         poolManager = _poolManager;
-        
+
         uint160 addr = uint160(address(this));
         uint160 flags = uint160(
             (1 << 13) | (1 << 12) | (1 << 11) | (1 << 10) |
             (1 << 9)  | (1 << 8)  | (1 << 7)  | (1 << 6) |
             (1 << 5)  | (1 << 4)
         );
-        
+
         if (address(this) != address(0) && (addr & flags) != flags) {
             revert HookAddressNotValid(address(this));
         }
@@ -120,11 +120,11 @@ abstract contract BaseHookMinimal {
     function beforeInitialize(address, PoolKey calldata, uint160) external virtual returns (bytes4) {
         return this.beforeInitialize.selector;
     }
-    
+
     function afterInitialize(address, PoolKey calldata, uint160, int24) external virtual returns (bytes4) {
         return this.afterInitialize.selector;
     }
-    
+
     function beforeAddLiquidity(
         address,
         PoolKey calldata,
@@ -133,7 +133,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4) {
         return this.beforeAddLiquidity.selector;
     }
-    
+
     function afterAddLiquidity(
         address,
         PoolKey calldata,
@@ -144,7 +144,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4, BalanceDelta) {
         return (this.afterAddLiquidity.selector, BalanceDelta.wrap(0));
     }
-    
+
     function beforeRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -153,7 +153,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4) {
         return this.beforeRemoveLiquidity.selector;
     }
-    
+
     function afterRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -164,7 +164,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4, BalanceDelta) {
         return (this.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
     }
-    
+
     function beforeSwap(
         address,
         PoolKey calldata,
@@ -173,7 +173,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4, BeforeSwapDelta, uint24) {
         return (this.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
     }
-    
+
     function afterSwap(
         address,
         PoolKey calldata,
@@ -183,7 +183,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4, int128) {
         return (this.afterSwap.selector, 0);
     }
-    
+
     function beforeDonate(
         address,
         PoolKey calldata,
@@ -193,7 +193,7 @@ abstract contract BaseHookMinimal {
     ) external virtual returns (bytes4) {
         return this.beforeDonate.selector;
     }
-    
+
     function afterDonate(
         address,
         PoolKey calldata,
@@ -213,7 +213,8 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     address public constant NATIVE_MON = address(0);
     address public constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
-    bytes32 public constant ETH_USD_FEED_ID = 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
+
+    bytes32 public constant MON_USD_FEED_ID = 0x31491744e2dbf6df7fcf4ac0820d18a609b49076d45066d3568424e62f686cd1;
     bytes32 public constant USDC_USD_FEED_ID = 0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a;
 
     uint256 public constant APY_SLICE_PERCENT = 3000;
@@ -380,8 +381,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         pyth = IPyth(_pythContract);
         nextAuctionId = 1;
         _status = NOT_ENTERED;
-        
-        // Initialize poolAllocation to prevent any storage issues
+
         poolAllocation = PoolAllocation({
             totalValue: 0,
             apySlice: 0,
@@ -409,7 +409,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     }
 
     // ============ UNISWAP V4 HOOK IMPLEMENTATIONS ============
-    
+
     function beforeInitialize(
         address,
         PoolKey calldata,
@@ -417,7 +417,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     ) external pure override returns (bytes4) {
         return this.beforeInitialize.selector;
     }
-    
+
     function afterInitialize(
         address,
         PoolKey calldata,
@@ -435,7 +435,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     ) external pure override returns (bytes4) {
         return this.beforeAddLiquidity.selector;
     }
-    
+
     function afterAddLiquidity(
         address,
         PoolKey calldata,
@@ -455,7 +455,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     ) external pure override returns (bytes4) {
         return this.beforeRemoveLiquidity.selector;
     }
-    
+
     function afterRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -475,16 +475,17 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     ) external pure override returns (bytes4, BeforeSwapDelta, uint24) {
         return (this.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
     }
-    
+
     uint256 public constant SWAP_FEE_BPS = 5;
     uint256 public totalSwapFeesCollected;
-    
-    event SwapFeesCaptured(uint256 feeAmount, bool isToken0, uint256 ethPrice, uint256 newApySlice);
-    
+
+    // ✅ Event param renamed from ethPrice to monPrice for clarity.
+    event SwapFeesCaptured(uint256 feeAmount, bool isToken0, uint256 monPrice, uint256 newApySlice);
+
     function _computePoolId(PoolKey calldata key) internal pure returns (bytes32) {
         return keccak256(abi.encode(key));
     }
-    
+
     function afterSwap(
         address,
         PoolKey calldata key,
@@ -495,18 +496,18 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         if (poolId == bytes32(0) || _computePoolId(key) != poolId) {
             return (this.afterSwap.selector, 0);
         }
-        
+
         if (poolAllocation.totalValue == 0) {
             return (this.afterSwap.selector, 0);
         }
-        
+
         int256 rawDelta = int256(BalanceDelta.unwrap(delta));
         int128 amount0 = int128(rawDelta >> 128);
         int128 amount1 = int128(rawDelta);
-        
+
         int128 unspecifiedAmount;
         bool isUSDCOutput;
-        
+
         if (params.zeroForOne) {
             unspecifiedAmount = amount1;
             isUSDCOutput = Currency.unwrap(key.currency1) == USDC;
@@ -514,39 +515,39 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             unspecifiedAmount = amount0;
             isUSDCOutput = Currency.unwrap(key.currency0) == USDC;
         }
-        
+
         if (unspecifiedAmount >= 0) {
             return (this.afterSwap.selector, 0);
         }
-        
+
         uint256 absOutput = uint256(uint128(-unspecifiedAmount));
         uint256 feeInOutputToken = (absOutput * SWAP_FEE_BPS) / 10000;
-        
+
         if (feeInOutputToken == 0) {
             return (this.afterSwap.selector, 0);
         }
-        
+
         uint256 usdcEquivalent;
         if (isUSDCOutput) {
             usdcEquivalent = feeInOutputToken;
         } else {
-            uint256 ethPrice = _getNormalizedETHPrice();
-            usdcEquivalent = (feeInOutputToken * ethPrice) / 1e8;
+            uint256 monPrice = _getNormalizedMONPrice();
+            usdcEquivalent = (feeInOutputToken * monPrice) / 1e8;
             usdcEquivalent = usdcEquivalent / 1e12;
         }
-        
+
         if (usdcEquivalent > 0) {
             poolAllocation.apySlice += usdcEquivalent;
             poolAllocation.totalValue += usdcEquivalent;
             totalSwapFeesCollected += usdcEquivalent;
-            
-            uint256 ethPrice = _getNormalizedETHPrice();
-            emit SwapFeesCaptured(usdcEquivalent, !params.zeroForOne, ethPrice, poolAllocation.apySlice);
+
+            uint256 monPrice = _getNormalizedMONPrice();
+            emit SwapFeesCaptured(usdcEquivalent, !params.zeroForOne, monPrice, poolAllocation.apySlice);
         }
-        
+
         return (this.afterSwap.selector, int128(uint128(feeInOutputToken)));
     }
-    
+
     function beforeDonate(
         address,
         PoolKey calldata,
@@ -556,7 +557,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     ) external pure override returns (bytes4) {
         return this.beforeDonate.selector;
     }
-    
+
     function afterDonate(
         address,
         PoolKey calldata,
@@ -590,7 +591,7 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
 
     function createAngelPool() external nonReentrant returns (bytes32) {
         if (poolId != bytes32(0)) revert("Pool already created");
-        
+
         PoolKey memory key = PoolKey({
             currency0: Currency.wrap(USDC),
             currency1: Currency.wrap(NATIVE_MON),
@@ -598,11 +599,10 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             tickSpacing: DEFAULT_TICK_SPACING,
             hooks: address(this)
         });
-        
+
         bytes32 newPoolId = keccak256(abi.encode(key));
         poolId = newPoolId;
-        
-        // Initialize the entire struct at once
+
         poolAllocation = PoolAllocation({
             totalValue: 0,
             apySlice: 0,
@@ -611,76 +611,75 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             activeLiquiditySlice: 0,
             totalInvestors: 0
         });
-        
+
         emit PoolCreated(newPoolId, msg.sender);
         return newPoolId;
     }
 
     function depositUSDC(uint256 amount) external nonReentrant poolExists {
         if (amount < MIN_USDC_DEPOSIT) revert BelowMinimum();
-        
+
         bool success = IERC20(USDC).transferFrom(msg.sender, address(this), amount);
         if (!success) revert TransferFailed();
-        
+
         _updateInvestor(msg.sender, amount, 0);
-        
+
         poolAllocation.idleSlice += amount;
         poolAllocation.totalValue += amount;
-        
+
         _recalculateShares();
-        
+
         emit InvestorDeposited(msg.sender, amount, 0, investors[msg.sender].sharePercentage);
     }
 
     function depositETH() external payable nonReentrant poolExists {
         if (msg.value < MIN_ETH_DEPOSIT) revert BelowMinimum();
-        
-        uint256 ethPrice = _getNormalizedETHPrice();
-        uint256 usdcValue = (msg.value * ethPrice) / 1e20;
-        
+        uint256 monPrice = _getNormalizedMONPrice();
+        uint256 usdcValue = (msg.value * monPrice) / 1e20;
+
         _updateInvestor(msg.sender, 0, msg.value);
-        
+
         poolAllocation.idleSlice += usdcValue;
         poolAllocation.totalValue += usdcValue;
-        
+
         _recalculateShares();
-        
+
         emit InvestorDeposited(msg.sender, 0, msg.value, investors[msg.sender].sharePercentage);
     }
 
     function allocateSlices() external nonReentrant poolExists {
         uint256 idleAmount = poolAllocation.idleSlice;
         if (idleAmount == 0) revert("No idle funds");
-        
+
         uint256 apyAmount = (idleAmount * APY_SLICE_PERCENT) / 10000;
         uint256 auctionAmount = (idleAmount * AUCTION_SLICE_PERCENT) / 10000;
-        
+
         uint256 totalAllocated = apyAmount + auctionAmount;
         require(totalAllocated <= idleAmount, "Allocation overflow");
-        
+
         poolAllocation.apySlice += apyAmount;
         poolAllocation.auctionSlice += auctionAmount;
         poolAllocation.idleSlice = idleAmount - totalAllocated;
-        
-        uint256 newTotal = poolAllocation.apySlice + poolAllocation.auctionSlice + 
+
+        uint256 newTotal = poolAllocation.apySlice + poolAllocation.auctionSlice +
                           poolAllocation.idleSlice + poolAllocation.activeLiquiditySlice;
-        
+
         if (newTotal != poolAllocation.totalValue) {
             revert TotalValueMismatch();
         }
-        
+
         _recalculateShares();
-        
+
         emit SlicesAllocated(apyAmount, auctionAmount);
     }
 
     function recoverAccounting() external onlyInvestor poolExists {
         uint256 oldTotal = poolAllocation.totalValue;
         uint256 actualBalance = IERC20(USDC).balanceOf(address(this));
-        
-        uint256 sumSlices = poolAllocation.apySlice + poolAllocation.auctionSlice + 
+
+        uint256 sumSlices = poolAllocation.apySlice + poolAllocation.auctionSlice +
                             poolAllocation.idleSlice + poolAllocation.activeLiquiditySlice;
-        
+
         if (actualBalance > sumSlices) {
             uint256 difference = actualBalance - sumSlices;
             poolAllocation.idleSlice += difference;
@@ -699,17 +698,17 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
                 });
             }
         }
-        
+
         poolAllocation.totalValue = actualBalance;
-        
-        uint256 newSum = poolAllocation.apySlice + poolAllocation.auctionSlice + 
+
+        uint256 newSum = poolAllocation.apySlice + poolAllocation.auctionSlice +
                          poolAllocation.idleSlice + poolAllocation.activeLiquiditySlice;
-        
+
         require(newSum == poolAllocation.totalValue, "Recovery failed");
-        
+
         _recalculateShares();
-        
-        emit AccountingRecovered(oldTotal, poolAllocation.totalValue, 
+
+        emit AccountingRecovered(oldTotal, poolAllocation.totalValue,
                                  poolAllocation.idleSlice);
     }
 
@@ -723,9 +722,9 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
 
         bool success = IERC20(USDC).transfer(msg.sender, amount);
         if (!success) revert TransferFailed();
-        
+
         _recalculateShares();
-        
+
         emit Withdrawal(msg.sender, USDC, amount);
     }
 
@@ -733,8 +732,8 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         Investor storage inv = investors[msg.sender];
         if (inv.ethContributed < amount) revert("Insufficient ETH");
 
-        uint256 ethPrice = _getNormalizedETHPrice();
-        uint256 usdcValue = (amount * ethPrice) / 1e20;
+        uint256 monPrice = _getNormalizedMONPrice();
+        uint256 usdcValue = (amount * monPrice) / 1e20;
 
         inv.ethContributed -= amount;
         _subtractFromSlices(usdcValue);
@@ -742,9 +741,9 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
 
         (bool success, ) = payable(msg.sender).call{value: amount}("");
         if (!success) revert TransferFailed();
-        
+
         _recalculateShares();
-        
+
         emit Withdrawal(msg.sender, NATIVE_MON, amount);
     }
 
@@ -776,40 +775,40 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         poolAllocation.activeLiquiditySlice -= remaining;
     }
 
-    function proposeAuctionInvestment(address auctionAddress, uint256 investmentAmount) 
-        external 
-        nonReentrant 
+    function proposeAuctionInvestment(address auctionAddress, uint256 investmentAmount)
+        external
+        nonReentrant
         poolExists
-        returns (uint256) 
+        returns (uint256)
     {
         Investor storage inv = investors[msg.sender];
         if (inv.sharePercentage == 0) revert InsufficientVotingPower();
-        
+
         IContinuousClearingAuction auction = IContinuousClearingAuction(auctionAddress);
-        
+
         if (auction.currency() != USDC) revert("Auction must use USDC");
         if (auction.isGraduated()) revert("Auction already graduated");
-        
+
         uint256 floorPrice = auction.floorPrice();
         uint256 tickSpacing = auction.tickSpacing();
-        
+
         for (uint256 i = 0; i < poolAuctionInvestments.length; i++) {
             AuctionInvestment storage existing = auctionInvestments[poolAuctionInvestments[i]];
             if (existing.auctionAddress == auctionAddress && existing.isActive) {
                 revert AuctionAlreadyProposed();
             }
         }
-        
+
         if (floorPrice == 0) revert InvalidAuctionParameters();
         if (tickSpacing == 0) revert InvalidAuctionParameters();
         if (floorPrice > MAX_REASONABLE_PRICE_Q96) revert InvalidAuctionParameters();
         if (tickSpacing > MAX_REASONABLE_PRICE_Q96) revert InvalidAuctionParameters();
-        
+
         if (poolAllocation.auctionSlice < investmentAmount) revert NotEnoughAuctionFunds();
         if (investmentAmount == 0) revert InvalidAmount();
 
         uint256 auctionId = nextAuctionId++;
-        
+
         AuctionInvestment storage investment = auctionInvestments[auctionId];
         investment.auctionId = auctionId;
         investment.auctionAddress = auctionAddress;
@@ -820,26 +819,26 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         investment.voteDeadline = block.timestamp + 3 days;
         investment.clearingPriceAtInvestment = auction.clearingPrice();
         investment.poolIdRef = poolId;
-        
+
         poolAuctionInvestments.push(auctionId);
         poolAllocation.auctionSlice -= investmentAmount;
-        
+
         emit AuctionProposed(auctionId, auctionAddress, investmentAmount, investment.voteDeadline);
-        
+
         return auctionId;
     }
 
     function voteOnAuction(uint256 auctionId, bool voteFor) external nonReentrant poolExists {
         Investor storage voter = investors[msg.sender];
         if (voter.sharePercentage == 0) revert InsufficientVotingPower();
-        
+
         AuctionInvestment storage investment = auctionInvestments[auctionId];
         if (!investment.isActive) revert AuctionNotActive();
         if (investment.isExecuted) revert AuctionAlreadyExecuted();
         if (block.timestamp > investment.voteDeadline) revert VotingEnded();
         if (investment.poolIdRef != poolId) revert("Auction not from this pool");
         if (voter.lastVoteAuctionId == auctionId) revert AlreadyVoted();
-        
+
         voter.lastVoteAuctionId = auctionId;
 
         InvestorAuctionShare memory share = InvestorAuctionShare({
@@ -849,15 +848,15 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             hasVoted: true,
             voteFor: voteFor
         });
-        
+
         auctionInvestorShares[auctionId].push(share);
-        
+
         if (voteFor) {
             investment.yesVotes += voter.sharePercentage;
         } else {
             investment.noVotes += voter.sharePercentage;
         }
-        
+
         emit AuctionVoted(auctionId, msg.sender, voteFor, voter.sharePercentage);
 
         if (investment.yesVotes >= VOTING_THRESHOLD) {
@@ -865,46 +864,45 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         }
     }
 
-    // Works with auction's permit2TransferFrom requirement
     function executeAuction(uint256 auctionId) external nonReentrant poolExists {
         if (msg.sender != tx.origin) revert OnlyEOA();
-        
+
         AuctionInvestment storage investment = auctionInvestments[auctionId];
-        
+
         if (investment.auctionAddress == address(0)) revert("Investment does not exist");
         if (investment.isExecuted) revert AuctionAlreadyExecuted();
-        
+
         IContinuousClearingAuction auction = IContinuousClearingAuction(investment.auctionAddress);
-        
+
         uint256 currentBlock = getActualContractBlockNumber();
         uint256 auctionStartBlock = auction.startBlock();
         uint256 auctionEndBlock = auction.endBlock();
-        
+
         if (currentBlock < auctionStartBlock) revert AuctionNotStarted();
         if (currentBlock >= auctionEndBlock) revert AuctionEnded();
         if (auction.isGraduated()) revert("Auction already graduated");
-        
+
         if (investment.yesVotes < VOTING_THRESHOLD) revert ThresholdNotReached();
-        
+
         uint256 floorPrice = auction.floorPrice();
         uint256 tickSpacing = auction.tickSpacing();
         uint256 maxPrice = floorPrice + tickSpacing;
-        
+
         uint256 proposedAmount = investment.proposedAmount;
-        
+
         if (proposedAmount == 0) revert InvalidAmount();
         if (proposedAmount > type(uint128).max) revert InvalidAmount();
-        
+
         uint256 balanceBefore = IERC20(USDC).balanceOf(address(this));
-        
+
         if (balanceBefore < proposedAmount) {
             revert("Insufficient USDC balance");
         }
-        
+
         IERC20(USDC).approve(PERMIT2, type(uint256).max);
         IPermit2(PERMIT2).approve(USDC, investment.auctionAddress, type(uint160).max, type(uint48).max);
         IERC20(USDC).approve(investment.auctionAddress, proposedAmount);
-        
+
         uint256 bidId = auction.submitBid(
             maxPrice,
             uint128(proposedAmount),
@@ -912,19 +910,19 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             floorPrice,
             ""
         );
-        
+
         uint256 balanceAfter = IERC20(USDC).balanceOf(address(this));
         uint256 spent = balanceBefore - balanceAfter;
-        
+
         if (spent > proposedAmount) {
             revert("Auction pulled more USDC than proposed");
         }
-        
+
         investment.totalInvestedUSDC = spent;
         investment.bidId = bidId;
         investment.isExecuted = true;
         investment.isActive = false;
-        
+
         emit DebugExecuteAuction(
             auctionId,
             proposedAmount,
@@ -941,50 +939,49 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             true,
             true
         );
-        
+
         emit AuctionExecuted(auctionId, investment.auctionAddress, spent, bidId);
     }
 
-    // Works with auction's permit2TransferFrom requirement
     function executeAuctionDirect(uint256 auctionId) external nonReentrant poolExists {
         if (msg.sender != tx.origin) revert OnlyEOA();
-        
+
         AuctionInvestment storage investment = auctionInvestments[auctionId];
-        
+
         if (investment.auctionAddress == address(0)) revert("Investment does not exist");
         if (investment.isExecuted) revert AuctionAlreadyExecuted();
-        
+
         IContinuousClearingAuction auction = IContinuousClearingAuction(investment.auctionAddress);
-        
+
         uint256 currentBlock = getActualContractBlockNumber();
         uint256 auctionStartBlock = auction.startBlock();
         uint256 auctionEndBlock = auction.endBlock();
-        
+
         if (currentBlock < auctionStartBlock) revert AuctionNotStarted();
         if (currentBlock >= auctionEndBlock) revert AuctionEnded();
         if (auction.isGraduated()) revert("Auction already graduated");
-        
+
         if (investment.yesVotes < VOTING_THRESHOLD) revert ThresholdNotReached();
-        
+
         uint256 floorPrice = auction.floorPrice();
         uint256 tickSpacing = auction.tickSpacing();
         uint256 maxPrice = floorPrice + tickSpacing;
-        
+
         uint256 proposedAmount = investment.proposedAmount;
-        
+
         if (proposedAmount == 0) revert InvalidAmount();
         if (proposedAmount > type(uint128).max) revert InvalidAmount();
-        
+
         uint256 balanceBefore = IERC20(USDC).balanceOf(address(this));
-        
+
         if (balanceBefore < proposedAmount) {
             revert("Insufficient USDC balance");
         }
-        
+
         IERC20(USDC).approve(PERMIT2, type(uint256).max);
         IPermit2(PERMIT2).approve(USDC, investment.auctionAddress, type(uint160).max, type(uint48).max);
         IERC20(USDC).approve(investment.auctionAddress, proposedAmount);
-        
+
         uint256 bidId = auction.submitBid(
             maxPrice,
             uint128(proposedAmount),
@@ -992,67 +989,67 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             floorPrice,
             ""
         );
-        
+
         uint256 balanceAfter = IERC20(USDC).balanceOf(address(this));
         uint256 spent = balanceBefore - balanceAfter;
-        
+
         if (spent > proposedAmount) {
             revert("Auction pulled more USDC than proposed");
         }
-        
+
         investment.totalInvestedUSDC = spent;
         investment.bidId = bidId;
         investment.isExecuted = true;
         investment.isActive = false;
-        
+
         emit AuctionExecuted(auctionId, investment.auctionAddress, spent, bidId);
     }
 
     function claimAuctionTokens(uint256 auctionId) external nonReentrant poolExists {
         AuctionInvestment storage investment = auctionInvestments[auctionId];
-        
+
         if (!investment.isExecuted) revert("Auction not executed");
         if (investment.tokensClaimed) revert TokensAlreadyClaimed();
-        
+
         IContinuousClearingAuction auction = IContinuousClearingAuction(investment.auctionAddress);
-        
+
         if (block.number < uint256(auction.endBlock())) revert AuctionNotEnded();
-        
+
         auction.claimTokens(investment.bidId);
-        
+
         address auctionToken = investment.auctionToken;
         uint256 tokenBalance = IERC20(auctionToken).balanceOf(address(this));
-        
+
         investment.tokensPurchased = tokenBalance;
         investment.tokensClaimed = true;
-        
+
         emit AuctionTokensClaimed(auctionId, auctionToken, tokenBalance);
-        
+
         _distributeAuctionTokens(auctionId, auctionToken, tokenBalance);
     }
 
     function _distributeAuctionTokens(uint256 auctionId, address token, uint256 totalTokens) internal {
         InvestorAuctionShare[] storage shares = auctionInvestorShares[auctionId];
-        
+
         uint256 totalYesVotes = 0;
         for (uint256 i = 0; i < shares.length; i++) {
             if (shares[i].voteFor) {
                 totalYesVotes += shares[i].sharePercentage;
             }
         }
-        
+
         if (totalYesVotes == 0) revert("No YES votes");
-        
+
         for (uint256 i = 0; i < shares.length; i++) {
             InvestorAuctionShare storage share = shares[i];
             if (share.voteFor) {
                 uint256 tokenAmount = (totalTokens * share.sharePercentage) / totalYesVotes;
-                
+
                 if (tokenAmount > 0) {
                     IERC20(token).transfer(share.investor, tokenAmount);
                     share.claimedTokens = tokenAmount;
                     investors[share.investor].tokenBalances[token] += tokenAmount;
-                    
+
                     emit TokensDistributed(auctionId, share.investor, token, tokenAmount);
                 }
             }
@@ -1061,11 +1058,11 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
 
     function _updateInvestor(address investorAddr, uint256 usdcAmount, uint256 ethAmount) internal {
         Investor storage inv = investors[investorAddr];
-        
+
         if (inv.wallet == address(0)) {
             investorList.push(investorAddr);
             poolAllocation.totalInvestors++;
-            
+
             inv.wallet = investorAddr;
             inv.usdcContributed = usdcAmount;
             inv.ethContributed = ethAmount;
@@ -1078,23 +1075,23 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
 
     function _recalculateShares() internal {
         uint256 totalValue = poolAllocation.totalValue;
-        
+
         if (totalValue == 0) {
             for (uint256 i = 0; i < investorList.length; i++) {
                 investors[investorList[i]].sharePercentage = 0;
             }
             return;
         }
-        
-        uint256 ethPrice = _getNormalizedETHPrice();
-        
+
+        uint256 monPrice = _getNormalizedMONPrice();
+
         for (uint256 i = 0; i < investorList.length; i++) {
             address investorAddr = investorList[i];
             Investor storage inv = investors[investorAddr];
-            
-            uint256 ethValueInUSDC = (inv.ethContributed * ethPrice) / 1e20;
-            uint256 investorValue = inv.usdcContributed + ethValueInUSDC;
-            
+
+            uint256 nativeValueInUSDC = (inv.ethContributed * monPrice) / 1e20;
+            uint256 investorValue = inv.usdcContributed + nativeValueInUSDC;
+
             if (investorValue > 0) {
                 inv.sharePercentage = (investorValue * 10000) / totalValue;
             } else {
@@ -1103,12 +1100,24 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
         }
     }
 
-    function _getNormalizedETHPrice() internal view returns (uint256) {
-        try pyth.getPriceNoOlderThan(ETH_USD_FEED_ID, 60) returns (IPyth.Price memory price) {
-            if (price.price < 0) return 2000 * 1e8;
-            return uint256(uint64(price.price));
+    /// @notice Returns MON price in USD, normalized to 8 decimals (e.g. 1e8 = $1.00).
+    function _getNormalizedMONPrice() internal view returns (uint256) {
+        try pyth.getPriceNoOlderThan(MON_USD_FEED_ID, 60) returns (IPyth.Price memory price) {
+            if (price.price <= 0) return 1e8;   // $1 fallback
+
+            int32 expo = price.expo;
+            int256 p = int256(price.price);
+
+            if (expo < -8) {
+                p = p / int256(10 ** uint32(-8 - expo));
+            } else if (expo > -8) {
+                p = p * int256(10 ** uint32(expo + 8));
+            }
+
+            if (p <= 0) return 1e8;
+            return uint256(p);
         } catch {
-            return 2000 * 1e8;
+            return 1e8;   // $1 fallback
         }
     }
 
@@ -1116,18 +1125,18 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     // All modifiers removed to prevent reverts
 
     function getInvestorInfo(address investor) external view returns (
-        uint256 usdcBalance, 
-        uint256 ethBalance, 
+        uint256 usdcBalance,
+        uint256 ethBalance,
         uint256 sharePercentage,
-        uint256 activeLiquidity, 
+        uint256 activeLiquidity,
         uint256[] memory positionIds
     ) {
         Investor storage inv = investors[investor];
         return (
-            inv.usdcContributed, 
-            inv.ethContributed, 
-            inv.sharePercentage, 
-            inv.activeLiquidity, 
+            inv.usdcContributed,
+            inv.ethContributed,
+            inv.sharePercentage,
+            inv.activeLiquidity,
             inv.positionTokenIds
         );
     }
@@ -1137,26 +1146,26 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     }
 
     function getAuctionDetails(uint256 auctionId) external view returns (
-        address auctionAddress, 
-        address auctionToken, 
+        address auctionAddress,
+        address auctionToken,
         uint256 proposedAmount,
         uint256 totalInvested,
-        uint256 tokensPurchased, 
-        bool isActive, 
+        uint256 tokensPurchased,
+        bool isActive,
         uint256 yesVotes,
-        uint256 noVotes, 
+        uint256 noVotes,
         uint256 deadline
     ) {
         AuctionInvestment storage investment = auctionInvestments[auctionId];
         return (
-            investment.auctionAddress, 
-            investment.auctionToken, 
+            investment.auctionAddress,
+            investment.auctionToken,
             investment.proposedAmount,
             investment.totalInvestedUSDC,
-            investment.tokensPurchased, 
-            investment.isActive, 
+            investment.tokensPurchased,
+            investment.isActive,
             investment.yesVotes,
-            investment.noVotes, 
+            investment.noVotes,
             investment.voteDeadline
         );
     }
@@ -1170,19 +1179,19 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     }
 
     function getPoolInfo() external view returns (
-        uint256 totalValue, 
-        uint256 apySlice, 
+        uint256 totalValue,
+        uint256 apySlice,
         uint256 auctionSlice,
-        uint256 idleSlice, 
-        uint256 activeLiquiditySlice, 
+        uint256 idleSlice,
+        uint256 activeLiquiditySlice,
         uint256 totalInvestors
     ) {
         return (
-            poolAllocation.totalValue, 
-            poolAllocation.apySlice, 
+            poolAllocation.totalValue,
+            poolAllocation.apySlice,
             poolAllocation.auctionSlice,
-            poolAllocation.idleSlice, 
-            poolAllocation.activeLiquiditySlice, 
+            poolAllocation.idleSlice,
+            poolAllocation.activeLiquiditySlice,
             poolAllocation.totalInvestors
         );
     }
@@ -1218,21 +1227,21 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     ) {
         AuctionInvestment storage investment = auctionInvestments[auctionId];
         require(investment.auctionAddress != address(0), "Auction not found");
-        
+
         IContinuousClearingAuction auction = IContinuousClearingAuction(investment.auctionAddress);
-        
+
         floorPrice = auction.floorPrice();
         tickSpacing = auction.tickSpacing();
         maxPrice = floorPrice + tickSpacing;
         proposedAmount = investment.proposedAmount;
-        
+
         uint256 proposedAmountMicro = proposedAmount * 1e6;
         tokenAmountMicro = (proposedAmountMicro * Q96) / maxPrice;
         verifyAmountMicro = (tokenAmountMicro * maxPrice) / Q96;
         mathValid = (verifyAmountMicro == proposedAmountMicro);
-        
+
         tokenAmountUSDC = tokenAmountMicro / 1e6;
-        
+
         currentBlock = uint64(getActualContractBlockNumber());
         auctionStartBlock = auction.startBlock();
         auctionEndBlock = auction.endBlock();
