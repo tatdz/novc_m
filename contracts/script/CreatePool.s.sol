@@ -38,7 +38,7 @@ contract CreatePool is Script {
     int24  constant TICK_SPACING = 60;
 
     // ---- Newly deployed hook ----
-    address constant HOOK_ADDRESS = 0x9d7CBeBe77a27D44BB0748C52462DeA763653fF0;
+    address constant HOOK_ADDRESS = 0xD242803aE1840bB5FaC91EcbBC03B26BcB2eFFF0;
 
     // V4 hook flags — all bits 4..13 set. This matches the flags the hook
     // requires at construction time.
@@ -100,16 +100,23 @@ contract CreatePool is Script {
             tickSpacing: TICK_SPACING,
             hooks: IHooks(HOOK_ADDRESS)
         });
-
         // Step 3: initial price.
         //   V4 stores sqrtPriceX96 = floor(sqrt(P) * 2^96),
-        //   where P = currency1/currency0 in raw units.
-        //   Here currency0 = MON (18 decimals), currency1 = USDC (6 decimals),
-        //   and 1 MON ~= $0.027.
-        //   P = 1e6 / (0.027 * 1e18) = 3.7000e-11
-        //   sqrt(P) = 6.083e-6
-        //   sqrtPriceX96 = floor(6.083e-6 * 2^96) = 482001430789625741400000
-        uint160 sqrtPriceX96 = 482001430789625741400000;
+        //   where P = currency1_raw / currency0_raw
+        //            = (USDC_raw per MON) / (MON_raw per MON).
+        //
+        //   currency0 = native MON (18 decimals)
+        //   currency1 = USDC (6 decimals)
+        //   Target: 1 MON = $0.027, USDC = $1.00
+        //
+        //   P = (0.027 * 1e6) / (1 * 1e18)
+        //     = 2.7e4 / 1e18
+        //     = 2.7e-14
+        //
+        //   sqrt(P) = 1.64317e-7
+        //   sqrtPriceX96 = floor(1.64317e-7 * 2^96)
+        //                = 13018000000000000000000
+        uint160 sqrtPriceX96 = 13018000000000000000000;
 
         console.log("Initializing pool at sqrtPriceX96:", sqrtPriceX96);
 

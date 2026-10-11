@@ -55,9 +55,9 @@ interface PythPrice {
 // Contract addresses for swap functionality
 const POOL_SWAP_TEST = '0xc4006B415D3625047E039e16C13766483CEE42cD' as Address
 const POOL_MANAGER = '0x451D64ab3b650040d2aE1886602b97ed6eDc643d' as Address
-const HOOK_ADDRESS = '0x9d7CBeBe77a27D44BB0748C52462DeA763653fF0' as Address
+const HOOK_ADDRESS = '0xD242803aE1840bB5FaC91EcbBC03B26BcB2eFFF0' as Address
 const USDC_ADDRESS = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
-const DIRECT_SWAP_ADDRESS = '0xc46B162AB7B4E503D244964403f4Adaa2339711f' as Address
+const DIRECT_SWAP_ADDRESS = '0x691549DE0D284919Ae0ee8387d91F97511cD5269' as Address
 
 // Pyth on-chain contract (Monad testnet) — used for MON/USD because
 // Pyth Pro doesn't grant this feed to our key.
@@ -298,6 +298,15 @@ export function AngelPoolDashboard() {
     }
 
     const amountInWei = parseUnits(swapAmount, 18)
+
+    // Reject swaps smaller than 0.0001 MON — they round to 0 USDC output
+    // and the pool's delta check reverts with "unexpected USDC delta".
+    if (amountInWei < 100000000000000n) {
+      setSwapError('Min swap amount is 0.0001 MON')
+      return
+    }
+
+    // Cap at 1 MON — the pool can absorb roughly this much before being drained.
     if (amountInWei > 1000000000000000000n) {
       setSwapError('Max swap amount is 1 MON')
       return
@@ -328,7 +337,7 @@ export function AngelPoolDashboard() {
         value: amountInWei,
         chain: walletClient.chain,
         account: address,
-        gas: 4000000n
+        gas: 5000000n
       })
 
       console.log('[Swap] Transaction sent:', txHash)
@@ -864,12 +873,19 @@ export function AngelPoolDashboard() {
     return (shareRaw / 100) * apySliceVal
   })()
 
+  // Fee display — returns a complete string including the leading $.
+  // For sub-6-decimal amounts, shows both the USDC figure and the wei value
+  // so 1-2 wei fees from testnet-sized swaps are still visible.
   const formatFeeDisplay = (fee: string | null): string => {
-    if (!fee) return '0.000000'
+    if (!fee) return '$0.000000'
     const numFee = parseFloat(fee)
-    if (numFee === 0) return '0.000000'
-    if (numFee < 0.000001) return '<0.000001'
-    return numFee.toFixed(6)
+    if (numFee === 0) return '$0.000000'
+
+    if (numFee < 0.000001) {
+      const wei = Math.round(numFee * 1e6)
+      return `$${numFee.toFixed(6)} (${wei} wei USDC)`
+    }
+    return `$${numFee.toFixed(6)}`
   }
 
   // Read MON price from the loaded Pyth prices, fall back to last-known value.
@@ -1398,7 +1414,8 @@ export function AngelPoolDashboard() {
             </div>
             <div style={{ marginBottom: '6px' }}>
               The 30% APY slice provides liquidity to the <strong>Uniswap v4 USDC/MON pool</strong>.
-              Every time someone trades on that pool, your hook captures <strong style={{ color: '#4ADE80' }}>0.05% fees</strong>.
+              Every time someone trades on that pool, your hook captures <strong style={{ color: '#4ADE80' }}>0.05% fees</strong>
+              {' '}— visible as soon as swap sizes are large enough (≥ 0.01 MON).
             </div>
           </div>
 
@@ -1419,13 +1436,13 @@ export function AngelPoolDashboard() {
                 value={swapAmount}
                 onChange={(e) => setSwapAmount(e.target.value)}
                 placeholder="0.001"
-                min="0.00001"
+                min="0.0001"
                 max="1"
                 step="0.0001"
                 style={inputStyle}
               />
               <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
-                Max: 1 MON • Fee: 0.05% (captured by hook)
+                Min: 0.0001 MON • Max: 1 MON • Fee: 0.05% (captured by hook)
                 {swapAmount && Number(swapAmount) >= 0.0001 && (
                   <span style={{ display: 'block', marginTop: '2px', color: '#FBBF24' }}>
                     Estimated fee: ~${(Number(swapAmount) * monPrice * 0.0005).toFixed(6)} USDC
@@ -1491,7 +1508,7 @@ export function AngelPoolDashboard() {
                   </span>
                 </span>
                 <span style={{ fontSize: '16px', fontWeight: '700', color: '#4ADE80' }}>
-                  ${formatFeeDisplay(totalSwapFees)} USDC
+                  {formatFeeDisplay(totalSwapFees)}
                 </span>
               </div>
               <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
@@ -1592,7 +1609,7 @@ export function AngelPoolDashboard() {
                   </span>
                 </div>
                 <div style={{ fontSize: '18px', fontWeight: 700, color: '#4ADE80' }}>
-                  ${formatFeeDisplay(totalSwapFees)} USDC
+                  {formatFeeDisplay(totalSwapFees)}
                 </div>
               </div>
             </div>
@@ -1612,11 +1629,11 @@ export function AngelPoolDashboard() {
                 Every swap through the Uniswap v4 pool adds 0.05% fees here.
                 {totalSwapFees && parseFloat(totalSwapFees) > 0 ? (
                   <span style={{ color: '#4ADE80', display: 'block', marginTop: '4px' }}>
-                    ✅ {parseFloat(totalSwapFees).toFixed(6)} USDC earned so far!
+                    ✅ {formatFeeDisplay(totalSwapFees)} earned so far!
                   </span>
                 ) : (
                   <span style={{ display: 'block', marginTop: '4px' }}>
-                    ⏳ Use the swap panel above to generate fees. A 1 MON swap generates ~${(1 * monPrice * 0.0005).toFixed(6)} in fees.
+                    ⏳ Use the swap panel above to generate fees. A 0.1 MON swap generates ~${(0.1 * monPrice * 0.0005).toFixed(6)} USDC in fees.
                   </span>
                 )}
               </div>

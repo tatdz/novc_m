@@ -40,19 +40,16 @@ library Actions {
 }
 
 contract AddLiquidity is Script {
-    // ---- Monad testnet addresses ----
     address constant POSITION_MANAGER = 0x3Bb14E3D0Cd50aBe3EdACa06d06c29C78676C31A;
     address constant USDC             = 0x534b2f3A21130d7a60830c2Df862319e593943A3;
     address constant PERMIT2          = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
-    // ---- Newly deployed hook ----
-    address constant HOOK = 0x9d7CBeBe77a27D44BB0748C52462DeA763653fF0;
+    // Newly deployed hook
+    address constant HOOK = 0xD242803aE1840bB5FaC91EcbBC03B26BcB2eFFF0;
 
-    // ---- Pool params (must match CreatePool and hook) ----
     uint24 constant FEE = 3000;
     int24  constant TICK_SPACING = 60;
 
-    // ---- Full-range ticks for spacing 60 ----
     int24 constant TICK_LOWER = -887220;
     int24 constant TICK_UPPER = 887220;
 
@@ -64,19 +61,21 @@ contract AddLiquidity is Script {
         console.log("MON balance (wei):", deployer.balance);
         console.log("USDC balance:    ", IERC20(USDC).balanceOf(deployer));
 
-        // Liquidity value: choose small enough that both sides fit the caps.
-        // At 1 MON ~= $0.027 and a full range, this lands around ~0.2 MON + ~1 USDC.
-        uint128 liquidity = 1e12;
+        // Liquidity scaled to fit the deployer's MON balance.
+        // At the corrected price (1 MON ~= $0.027) and full range:
+        //   1e12 liquidity -> ~6.08 MON + ~0.16 USDC
+        //   so 2.5e11 -> ~1.52 MON + ~0.04 USDC
+        uint128 liquidity = 250_000_000_000; // 2.5e11
 
-        uint128 amount0Max = 1 ether;         // 1 MON max native side
-        uint128 amount1Max = 10_000_000;      // 10 USDC max token side
+        uint128 amount0Max = 2_000_000_000_000_000_000; // 2 MON
+        uint128 amount1Max = 10_000_000;                // 10 USDC
 
         require(deployer.balance >= amount0Max, "Not enough MON");
         require(IERC20(USDC).balanceOf(deployer) >= amount1Max, "Not enough USDC");
 
         vm.startBroadcast(pk);
 
-        // ---- Approval 1: USDC -> Permit2 ----
+        // ---- Approval 1: USDC -> Permit2 (skip if already set) ----
         uint256 currentAllowance = IERC20(USDC).allowance(deployer, PERMIT2);
         if (currentAllowance < amount1Max) {
             if (currentAllowance > 0) {
@@ -116,8 +115,6 @@ contract AddLiquidity is Script {
             hooks: HOOK
         });
 
-        // MINT_POSITION params:
-        //   (PoolKey, tickLower, tickUpper, liquidity, amount0Max, amount1Max, owner, hookData)
         bytes memory mintParams = abi.encode(
             key,
             TICK_LOWER,
@@ -129,8 +126,6 @@ contract AddLiquidity is Script {
             bytes("")
         );
 
-        // SETTLE_PAIR params:
-        //   (Currency currency0, Currency currency1)
         bytes memory settleParams = abi.encode(key.currency0, key.currency1);
 
         bytes memory actions = abi.encodePacked(

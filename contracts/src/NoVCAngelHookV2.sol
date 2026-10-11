@@ -516,11 +516,11 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
             isUSDCOutput = Currency.unwrap(key.currency0) == USDC;
         }
 
-        if (unspecifiedAmount >= 0) {
-            return (this.afterSwap.selector, 0);
-        }
+if (unspecifiedAmount <= 0) {
+    return (this.afterSwap.selector, 0);
+}
 
-        uint256 absOutput = uint256(uint128(-unspecifiedAmount));
+uint256 absOutput = uint256(uint128(unspecifiedAmount));
         uint256 feeInOutputToken = (absOutput * SWAP_FEE_BPS) / 10000;
 
         if (feeInOutputToken == 0) {
