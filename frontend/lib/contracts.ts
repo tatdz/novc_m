@@ -26,7 +26,7 @@ const HARDCODED_ADDRESSES = {
 // ============================================
 export const DEPLOYED_ADDRESSES = {
   // NoVC Core - Deployed on Monad Testnet
-  NOVC_ANGEL_HOOK: '0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0' as Address,
+  NOVC_ANGEL_HOOK: '0x9d7CBeBe77a27D44BB0748C52462DeA763653fF0' as Address,
   POOL_MANAGER: '0x451D64ab3b650040d2aE1886602b97ed6eDc643d' as Address,
   POSITION_MANAGER: '0x3Bb14E3D0Cd50aBe3EdACa06d06c29C78676C31A' as Address,
   UNIVERSAL_ROUTER: '0x1b7bFCd2870329B987191910D85c22C7287f3c22' as Address,
@@ -128,7 +128,7 @@ export const CONTRACT_ADDRESSES = CONTRACTS
 // Pyth Price Feed IDs
 // ============================================
 export const PYTH_FEEDS = {
-  ETH_USD: (process.env.NEXT_PUBLIC_PYTH_ETH_USD || '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace') as `0x${string}`,
+  MON_USD: (process.env.NEXT_PUBLIC_PYTH_MON_USD || '0x31491744e2dbf6df7fcf4ac0820d18a609b49076d45066d3568424e62f686cd1') as `0x${string}`,
   USDC_USD: (process.env.NEXT_PUBLIC_PYTH_USDC_USD || '0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a') as `0x${string}`,
 } as const
 

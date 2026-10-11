@@ -3,9 +3,8 @@ import { type Hex } from 'viem'
 
 // Pyth feed IDs
 export const PYTH_FEED_IDS = {
-  ETH_USD: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace',
+  MON_USD: '0x31491744e2dbf6df7fcf4ac0820d18a609b49076d45066d3568424e62f686cd1',
   USDC_USD: '0xeaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a',
-  EURC_USD: '0x76fa85158bf14ede77087fe3ae472f66213f6ea2f5b411cb2de472794990fa5c',
 } as const
 
 export type PythFeedId = typeof PYTH_FEED_IDS[keyof typeof PYTH_FEED_IDS]
@@ -99,7 +98,7 @@ class PythService {
       console.error('Failed to fetch price:', error)
       // Return fallback price
       return {
-        price: feedId === PYTH_FEED_IDS.ETH_USD ? 2500 : 1,
+        price: feedId === PYTH_FEED_IDS.MON_USD ? 2500 : 1,
         confidence: 1,
         timestamp: Math.floor(Date.now() / 1000)
       }

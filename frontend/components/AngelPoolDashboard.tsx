@@ -55,9 +55,30 @@ interface PythPrice {
 // Contract addresses for swap functionality
 const POOL_SWAP_TEST = '0xc4006B415D3625047E039e16C13766483CEE42cD' as Address
 const POOL_MANAGER = '0x451D64ab3b650040d2aE1886602b97ed6eDc643d' as Address
-const HOOK_ADDRESS = '0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0' as Address
+const HOOK_ADDRESS = '0x9d7CBeBe77a27D44BB0748C52462DeA763653fF0' as Address
 const USDC_ADDRESS = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
-const DIRECT_SWAP_ADDRESS = '0x5Dd8cFCa08f604da9E5b77031f83519549A5590D' as Address
+const DIRECT_SWAP_ADDRESS = '0xc46B162AB7B4E503D244964403f4Adaa2339711f' as Address
+
+// Pyth on-chain contract (Monad testnet) — used for MON/USD because
+// Pyth Pro doesn't grant this feed to our key.
+const PYTH_CONTRACT = '0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379' as Address
+
+// ABI for Pyth's `getPriceNoOlderThan` view function.
+const PYTH_ABI = [{
+  name: 'getPriceNoOlderThan',
+  type: 'function',
+  stateMutability: 'view',
+  inputs: [
+    { name: 'id', type: 'bytes32' },
+    { name: 'age', type: 'uint256' }
+  ],
+  outputs: [
+    { name: 'price', type: 'int64' },
+    { name: 'conf', type: 'uint64' },
+    { name: 'expo', type: 'int32' },
+    { name: 'publishTime', type: 'uint256' }
+  ]
+}] as const
 
 export function AngelPoolDashboard() {
   const { address, isConnected } = useAccount()
@@ -72,7 +93,6 @@ export function AngelPoolDashboard() {
   const { getAllAuctions } = useAuctionStore()
   const { data: walletClient } = useWalletClient()
 
-  // Original state
   const [depositAmount, setDepositAmount] = useState('')
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [depositType, setDepositType] = useState<'usdc' | 'eth'>('usdc')
@@ -94,7 +114,6 @@ export function AngelPoolDashboard() {
   const [totalSwapFees, setTotalSwapFees] = useState<string | null>(null)
   const [lastAction, setLastAction] = useState<number>(Date.now())
 
-  // New swap state
   const [swapAmount, setSwapAmount] = useState('')
   const [swapStatus, setSwapStatus] = useState<string | null>(null)
   const [swapError, setSwapError] = useState<string | null>(null)
@@ -130,7 +149,6 @@ export function AngelPoolDashboard() {
     return () => clearInterval(interval)
   }, [isConnected, lastAction, refreshPoolInfo, refreshInvestorInfo])
 
-  // Helper function to trigger refresh after any action
   const triggerRefresh = useCallback(() => {
     setLastAction(Date.now())
   }, [])
@@ -266,7 +284,7 @@ export function AngelPoolDashboard() {
     return () => clearInterval(interval)
   }, [fetchSwapFees])
 
-  // ==================== EXECUTE SWAP USING DIRECT SWAP CONTRACT ====================
+  // ==================== EXECUTE SWAP ====================
   const executeSwap = async () => {
     if (!address || !walletClient || !publicClient) {
       setSwapError('Wallet not connected')
@@ -280,8 +298,8 @@ export function AngelPoolDashboard() {
     }
 
     const amountInWei = parseUnits(swapAmount, 18)
-    if (amountInWei > 1000000000000000n) {
-      setSwapError('Max swap amount is 0.001 ETH')
+    if (amountInWei > 1000000000000000000n) {
+      setSwapError('Max swap amount is 1 MON')
       return
     }
 
@@ -292,24 +310,25 @@ export function AngelPoolDashboard() {
 
     try {
       console.log('[Swap] Using DirectSwap contract at:', DIRECT_SWAP_ADDRESS)
-      console.log('[Swap] Swap amount:', swapAmount, 'ETH')
+      console.log('[Swap] Swap amount:', swapAmount, 'MON')
 
       setSwapStatus('Executing swap...')
 
       const txHash = await walletClient.writeContract({
         address: DIRECT_SWAP_ADDRESS,
         abi: [{
-          name: 'swapETHForUSDC',
+          name: 'swapMONForUSDC',
           type: 'function',
-          inputs: [],
+          inputs: [{ name: 'minUSDCAmountOut', type: 'uint256' }],
           outputs: [],
           stateMutability: 'payable'
         }],
-        functionName: 'swapETHForUSDC',
+        functionName: 'swapMONForUSDC',
+        args: [0n],
         value: amountInWei,
         chain: walletClient.chain,
         account: address,
-        gas: 500000n
+        gas: 4000000n
       })
 
       console.log('[Swap] Transaction sent:', txHash)
@@ -345,7 +364,7 @@ export function AngelPoolDashboard() {
       let errorMessage = err?.shortMessage || err?.message || 'Swap failed'
 
       if (err?.message?.includes('execution reverted')) {
-        errorMessage = 'Transaction reverted - check if you have enough ETH'
+        errorMessage = 'Transaction reverted - check if you have enough MON'
       }
 
       setSwapError(errorMessage)
@@ -356,38 +375,111 @@ export function AngelPoolDashboard() {
   }
 
   // ==================== PYTH PRICES ====================
+  // MON/USD  → on-chain Pyth contract (Pyth Pro doesn't grant this feed to our key)
+  // USDC/USD → Pyth Pro REST via /api/pyth proxy (server-side API key)
+  // Both have hardcoded fallbacks so the UI never breaks.
   const fetchPythPrices = async () => {
+    if (!publicClient) {
+      console.warn('[Pyth] publicClient not ready yet')
+      return
+    }
     setPythLoading(true)
     setPythError(null)
+
+    // --- MON/USD: on-chain read ---
+    let monEntry: PythPrice
     try {
-      const response = await fetch(
-        `https://hermes.pyth.network/v2/updates/price/latest?ids[]=${PYTH_FEEDS.ETH_USD}&ids[]=${PYTH_FEEDS.USDC_USD}`
-      )
-      if (!response.ok) throw new Error('Pyth API unavailable')
-      const data = await response.json()
-      const prices: PythPrice[] = data.parsed?.map((p: any, idx: number) => ({
-        price: p.price?.price || '0',
-        conf: p.price?.conf || '0',
-        expo: p.price?.expo || 0,
-        publishTime: p.price?.publish_time || 0,
-        feedName: idx === 0 ? 'ETH/USD' : 'USDC/USD'
-      })) || []
-      setPythPrices(prices)
+      const [price, conf, expo, publishTime] = await publicClient.readContract({
+        address: PYTH_CONTRACT,
+        abi: PYTH_ABI,
+        functionName: 'getPriceNoOlderThan',
+        args: [PYTH_FEEDS.MON_USD as `0x${string}`, 300n],
+      })
+      monEntry = {
+        price: price.toString(),
+        conf: conf.toString(),
+        expo: Number(expo),
+        publishTime: Number(publishTime),
+        feedName: 'MON/USD',
+      }
+      console.log('[Pyth] MON/USD on-chain:', monEntry)
     } catch (err: any) {
-      setPythError(err.message)
-    } finally {
-      setPythLoading(false)
+      console.warn(
+        '[Pyth] MON/USD on-chain read failed, using fallback:',
+        err?.shortMessage || err?.message
+      )
+      monEntry = {
+        price: '2702095',   // last-verified $0.02702095
+        conf: '0',
+        expo: -8,
+        publishTime: Math.floor(Date.now() / 1000),
+        feedName: 'MON/USD',
+      }
     }
+
+    // --- USDC/USD: Pyth Pro proxy ---
+    let usdcEntry: PythPrice
+    try {
+      const response = await fetch('/api/pyth')
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new Error(body.error || `Pyth proxy returned ${response.status}`)
+      }
+      const data = await response.json()
+      const parsed = Array.isArray(data?.prices) ? data.prices : []
+      const usdcPrice = parsed.find((p: any) => p.feedName === 'USDC/USD')
+      if (!usdcPrice) {
+        throw new Error('USDC/USD missing from Pyth Pro response')
+      }
+      usdcEntry = {
+        price: String(usdcPrice.price),
+        conf: String(usdcPrice.conf),
+        expo: Number(usdcPrice.expo),
+        publishTime: Number(usdcPrice.publishTime),
+        feedName: 'USDC/USD',
+      }
+      console.log('[Pyth] USDC/USD from Pyth Pro:', usdcEntry)
+    } catch (err: any) {
+      console.warn(
+        '[Pyth Pro] USDC/USD fetch failed, using $1.00 fallback:',
+        err?.message
+      )
+      usdcEntry = {
+        price: '100000000',   // $1.00000000
+        conf: '0',
+        expo: -8,
+        publishTime: Math.floor(Date.now() / 1000),
+        feedName: 'USDC/USD',
+      }
+    }
+
+    const results = [monEntry, usdcEntry]
+    setPythPrices(results)
+    console.log('[Pyth] Final price set:', results)
+    setPythLoading(false)
   }
 
+  // Auto-fetch prices when entering the Oracle tab
   useEffect(() => {
     if (activeSection === 'oracle') fetchPythPrices()
   }, [activeSection])
 
+  // Also fetch once on mount (so header MON price is available earlier)
+  useEffect(() => {
+    if (isConnected && publicClient) fetchPythPrices()
+  }, [isConnected, publicClient])
+
+  // Periodic refresh of MON/USD every 15s regardless of tab, so the header
+  // always shows a fresh price.
+  useEffect(() => {
+    if (!isConnected || !publicClient) return
+    const interval = setInterval(() => {
+      fetchPythPrices()
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [isConnected, publicClient])
+
   // ==================== DEPOSIT HANDLER ====================
-  // ✅ FIX: refresh contract state before deciding to auto-allocate, and skip
-  // allocateSlices if the contract's idle slice is already zero (the deposit
-  // auto-allocation would have drained it).
   const handleDeposit = async () => {
     if (!depositAmount || parseFloat(depositAmount) <= 0) return
     try {
@@ -398,14 +490,13 @@ export function AngelPoolDashboard() {
         setSuccess(`Deposited ${depositAmount} USDC`)
       } else {
         await depositETH(parseUnits(depositAmount, 18).toString())
-        setSuccess(`Deposited ${depositAmount} ETH`)
+        setSuccess(`Deposited ${depositAmount} MON`)
       }
       setDepositAmount('')
 
       setSuccess(prev => (prev || '') + ' — Waiting for confirmation...')
       await new Promise(resolve => setTimeout(resolve, 5000))
 
-      // ✅ FIX: refresh + read contract directly before attempting allocate.
       await refreshPoolInfo()
       await refreshInvestorInfo()
 
@@ -422,7 +513,7 @@ export function AngelPoolDashboard() {
         try {
           setSuccess(prev => (prev || '') + ' — Allocating 30/70...')
           await allocateSlices()
-          setSuccess(`✅ Deposited & allocated ${depositAmount} ${depositType.toUpperCase()}`)
+          setSuccess(`✅ Deposited & allocated ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'}`)
 
           await refreshPoolInfo()
           await refreshInvestorInfo()
@@ -432,14 +523,14 @@ export function AngelPoolDashboard() {
           console.log('[Deposit] Allocation failed - funds are in idle state')
           const msg = err?.message || ''
           if (msg.includes('No idle funds')) {
-            setSuccess(`✅ Deposited ${depositAmount} ${depositType.toUpperCase()} — already allocated`)
+            setSuccess(`✅ Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — already allocated`)
           } else {
-            setSuccess(`Deposited ${depositAmount} ${depositType.toUpperCase()} — Click "Allocate" to split 30/70`)
+            setSuccess(`Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — Click "Allocate" to split 30/70`)
           }
           triggerRefresh()
         }
       } else {
-        setSuccess(`✅ Deposited ${depositAmount} ${depositType.toUpperCase()} — allocated 30/70 automatically`)
+        setSuccess(`✅ Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — allocated 30/70 automatically`)
         await refreshPoolInfo()
         await refreshInvestorInfo()
         await refreshAuctionsFromContract()
@@ -464,7 +555,7 @@ export function AngelPoolDashboard() {
         setSuccess(`Withdrew ${withdrawAmount} USDC`)
       } else {
         await withdrawETH(parseUnits(withdrawAmount, 18).toString())
-        setSuccess(`Withdrew ${withdrawAmount} ETH`)
+        setSuccess(`Withdrew ${withdrawAmount} MON`)
       }
       setWithdrawAmount('')
       await refreshPoolInfo()
@@ -479,14 +570,11 @@ export function AngelPoolDashboard() {
   }
 
   // ==================== ALLOCATE HANDLER ====================
-  // ✅ FIX: re-read the contract's idle slice before acting; if it is 0,
-  // show a friendly message instead of letting simulateContract revert.
   const handleAllocate = async () => {
     try {
       setIsAllocating(true)
       setLocalError(null)
 
-      // Refresh state, then read the contract directly.
       await refreshPoolInfo()
       let idleNow = 0
       try {
@@ -762,18 +850,13 @@ export function AngelPoolDashboard() {
 
   const formatPythPrice = (price: string, expo: number): string => {
     const num = Number(price) * Math.pow(10, expo)
-    return num.toFixed(2)
-  }
-
-  const formatExplorerUrl = (txHash: string) => {
-    return `https://testnet.monadscan.com/tx/${txHash}`
+    return num.toFixed(4)
   }
 
   const availableAuctions = getAllAuctions().filter((a: any) => currentBlockNumber === 0 || a.endBlock > currentBlockNumber)
   const auctionSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.auctionSlice) : 0
   const idleSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.idleSlice) : 0
 
-  // Calculate APY earnings
   const investorAPYValue = (() => {
     if (!hookPoolInfo || !investorInfo) return 0
     const shareRaw = parseFloat(investorInfo.sharePercentage.replace('%', ''))
@@ -781,7 +864,6 @@ export function AngelPoolDashboard() {
     return (shareRaw / 100) * apySliceVal
   })()
 
-  // Format fee display with proper decimal places
   const formatFeeDisplay = (fee: string | null): string => {
     if (!fee) return '0.000000'
     const numFee = parseFloat(fee)
@@ -790,16 +872,16 @@ export function AngelPoolDashboard() {
     return numFee.toFixed(6)
   }
 
-  // Get current ETH price from Pyth
-  const getEthPrice = useCallback((): number => {
-    const ethPriceFeed = pythPrices.find(p => p.feedName === 'ETH/USD')
-    if (ethPriceFeed) {
-      return parseFloat(ethPriceFeed.price) * Math.pow(10, ethPriceFeed.expo)
+  // Read MON price from the loaded Pyth prices, fall back to last-known value.
+  const getMonPrice = useCallback((): number => {
+    const monPriceFeed = pythPrices.find(p => p.feedName === 'MON/USD')
+    if (monPriceFeed) {
+      return parseFloat(monPriceFeed.price) * Math.pow(10, monPriceFeed.expo)
     }
-    return 2000
+    return 0.02702095
   }, [pythPrices])
 
-  const ethPrice = getEthPrice()
+  const monPrice = getMonPrice()
 
   // ==================== CLAIM APY HANDLER ====================
   const handleClaimAPY = async () => {
@@ -855,7 +937,7 @@ export function AngelPoolDashboard() {
           <span style={{ fontWeight: 600, color: '#A78BFA' }}>How to use the Angel Pool:</span>
         </div>
         <ol style={{ margin: '4px 0 0 24px', color: '#94A3B8', fontSize: '11px' }}>
-          <li>Deposit USDC or ETH (funds go to Idle state)</li>
+          <li>Deposit USDC or MON (funds go to Idle state)</li>
           <li>Click "Allocate" to split 30% APY / 70% Auction</li>
           <li>30% APY slice earns <strong style={{ color: '#4ADE80' }}>0.05% fees</strong> when people trade on Uniswap v4</li>
           <li>70% Auction slice lets you propose and vote on startup investments</li>
@@ -919,14 +1001,14 @@ export function AngelPoolDashboard() {
         </div>
       </div>
 
-      {/* Simplified Pool Stats - No Ownership Percentages */}
+      {/* Pool Stats */}
       {hookPoolInfo && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
           <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '12px' }}>
             <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Liquid Pool (USDC)</div>
             <div style={{ fontSize: '20px', fontWeight: 600, color: '#F8FAFC' }}>${parseFloat(hookPoolInfo.totalValue).toFixed(2)}</div>
             <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
-              ETH Price: ${ethPrice.toFixed(2)}
+              MON Price: ${monPrice.toFixed(4)}
             </div>
           </div>
 
@@ -944,11 +1026,11 @@ export function AngelPoolDashboard() {
                   )}
                 </div>
                 <div>
-                  <span style={{ fontSize: '11px', color: '#FBBF24' }}>ETH: </span>
-                  <span style={{ fontSize: '16px', fontWeight: 600, color: '#F8FAFC' }}>{parseFloat(investorInfo.ethBalance).toFixed(4)} ETH</span>
+                  <span style={{ fontSize: '11px', color: '#FBBF24' }}>MON: </span>
+                  <span style={{ fontSize: '16px', fontWeight: 600, color: '#F8FAFC' }}>{parseFloat(investorInfo.ethBalance).toFixed(4)} MON</span>
                 </div>
                 <div style={{ fontSize: '10px', color: '#94A3B8', marginTop: '2px' }}>
-                  ≈ ${((parseFloat(investorInfo.ethBalance) || 0) * ethPrice).toFixed(2)} USDC
+                  ≈ ${((parseFloat(investorInfo.ethBalance) || 0) * monPrice).toFixed(4)} USDC
                 </div>
               </div>
             ) : (
@@ -1012,7 +1094,7 @@ export function AngelPoolDashboard() {
                   background: depositType === t ? '#2d2d44' : 'transparent',
                   color: depositType === t ? '#F8FAFC' : '#64748B', fontSize: '11px'
                 }}>
-                {t.toUpperCase()}
+                {t === 'usdc' ? 'USDC' : 'MON'}
               </button>
             ))}
           </div>
@@ -1020,7 +1102,7 @@ export function AngelPoolDashboard() {
           <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <input type="number" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)}
-                placeholder={`Amount in ${depositType.toUpperCase()}`} style={inputStyle} />
+                placeholder={`Amount in ${depositType === 'usdc' ? 'USDC' : 'MON'}`} style={inputStyle} />
               {depositType === 'usdc' && usdcBalance && (
                 <div style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>
                   Balance: {formatUnits(usdcBalance.value, usdcBalance.decimals)} USDC
@@ -1036,7 +1118,7 @@ export function AngelPoolDashboard() {
           <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <input type="number" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)}
-                placeholder={`Withdraw ${depositType.toUpperCase()}`} style={inputStyle} />
+                placeholder={`Withdraw ${depositType === 'usdc' ? 'USDC' : 'MON'}`} style={inputStyle} />
               {investorInfo && (
                 <div style={{ fontSize: '9px', color: '#64748B', marginTop: '2px' }}>
                   Available: {depositType === 'usdc' ? investorInfo.usdcBalance : investorInfo.ethBalance}
@@ -1315,7 +1397,7 @@ export function AngelPoolDashboard() {
               <span style={{ color: '#60A5FA', fontWeight: 600, fontSize: '12px' }}>ℹ️ How APY Works</span>
             </div>
             <div style={{ marginBottom: '6px' }}>
-              The 30% APY slice provides liquidity to the <strong>Uniswap v4 USDC/ETH pool</strong>.
+              The 30% APY slice provides liquidity to the <strong>Uniswap v4 USDC/MON pool</strong>.
               Every time someone trades on that pool, your hook captures <strong style={{ color: '#4ADE80' }}>0.05% fees</strong>.
             </div>
           </div>
@@ -1325,28 +1407,28 @@ export function AngelPoolDashboard() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #4ADE80, #22C55E)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🔄</div>
               <div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC' }}>Generate APY - Swap ETH for USDC</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC' }}>Generate APY - Swap MON for USDC</div>
                 <div style={{ fontSize: '11px', color: '#94A3B8' }}>Execute a swap to generate 0.05% fees for the APY slice</div>
               </div>
             </div>
 
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '4px', display: 'block' }}>Amount (ETH)</label>
+              <label style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '4px', display: 'block' }}>Amount (MON)</label>
               <input
                 type="number"
                 value={swapAmount}
                 onChange={(e) => setSwapAmount(e.target.value)}
-                placeholder="0.0001"
+                placeholder="0.001"
                 min="0.00001"
-                max="0.001"
-                step="0.00001"
+                max="1"
+                step="0.0001"
                 style={inputStyle}
               />
               <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
-                Max: 0.001 ETH • Fee: 0.05% (captured by hook)
+                Max: 1 MON • Fee: 0.05% (captured by hook)
                 {swapAmount && Number(swapAmount) >= 0.0001 && (
                   <span style={{ display: 'block', marginTop: '2px', color: '#FBBF24' }}>
-                    Estimated fee: ~${(Number(swapAmount) * ethPrice * 0.0005).toFixed(6)} USDC
+                    Estimated fee: ~${(Number(swapAmount) * monPrice * 0.0005).toFixed(6)} USDC
                   </span>
                 )}
               </div>
@@ -1389,7 +1471,7 @@ export function AngelPoolDashboard() {
                 color: '#000'
               }}
             >
-              {feesLoading ? 'Swapping...' : 'Swap ETH for USDC'}
+              {feesLoading ? 'Swapping...' : 'Swap MON for USDC'}
             </button>
 
             {/* Fee Display */}
@@ -1403,12 +1485,12 @@ export function AngelPoolDashboard() {
                       cursor: 'help',
                       borderBottom: '1px dotted #64748B'
                     }}
-                    title="Fees are 0.05% of each swap. Small swaps may show 0 due to rounding (minimum fee is ~0.000001 USDC). Try a 0.01 ETH swap to see visible fees."
+                    title="Fees are 0.05% of each swap, valued in USDC using the on-chain Pyth MON/USD feed."
                   >
                     ⓘ
                   </span>
                 </span>
-                <span style={{ fontSize: '16px', fontWeight: 700, color: '#4ADE80' }}>
+                <span style={{ fontSize: '16px', fontWeight: '700', color: '#4ADE80' }}>
                   ${formatFeeDisplay(totalSwapFees)} USDC
                 </span>
               </div>
@@ -1416,21 +1498,21 @@ export function AngelPoolDashboard() {
                 Fees accumulate in APY slice with each swap
                 {totalSwapFees && parseFloat(totalSwapFees) === 0 && (
                   <span style={{ display: 'block', marginTop: '4px', color: '#FBBF24' }}>
-                    ⚡ Try a larger swap (0.01 ETH) to see fees - minimum fee is ~0.000001 USDC
+                    ⚡ Try a larger swap to see fees - minimum fee is ~0.000001 USDC
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Pyth Oracle Section */}
+          {/* Pyth Oracle Section — mixed sources */}
           <div style={{ background: '#1e1e2e', borderRadius: '10px', padding: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>⚡</div>
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Pyth Oracle</div>
-                  <div style={{ fontSize: '9px', color: '#64748B' }}>Real-time price feeds</div>
+                  <div style={{ fontSize: '9px', color: '#64748B' }}>MON on-chain • USDC via Pyth Pro</div>
                 </div>
               </div>
               <button onClick={fetchPythPrices} disabled={pythLoading}
@@ -1473,7 +1555,7 @@ export function AngelPoolDashboard() {
             <div style={{ marginTop: '10px', padding: '8px 10px', background: '#12121c', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#22C55E' }} />
               <span style={{ fontSize: '9px', color: '#64748B', fontFamily: 'monospace' }}>
-                {CONTRACTS.PYTH?.slice(0, 10)}...{CONTRACTS.PYTH?.slice(-4)}
+                MON: {PYTH_CONTRACT.slice(0, 10)}...{PYTH_CONTRACT.slice(-4)} • USDC: Pyth Pro
               </span>
             </div>
           </div>
@@ -1504,7 +1586,7 @@ export function AngelPoolDashboard() {
                       cursor: 'help',
                       borderBottom: '1px dotted #64748B'
                     }}
-                    title="0.05% of each swap. With 0.001 ETH swap at $2000/ETH, fee is ~$0.001 (shows as 0.000001 USDC)"
+                    title="0.05% of each swap, valued in USDC via the on-chain Pyth MON/USD feed."
                   >
                     ⓘ
                   </span>
@@ -1515,7 +1597,6 @@ export function AngelPoolDashboard() {
               </div>
             </div>
 
-            {/* Live APY Updates */}
             <div style={{
               padding: '12px',
               background: 'rgba(74,222,128,0.06)',
@@ -1535,7 +1616,7 @@ export function AngelPoolDashboard() {
                   </span>
                 ) : (
                   <span style={{ display: 'block', marginTop: '4px' }}>
-                    ⏳ Use the swap panel above to generate fees! A 0.01 ETH swap would generate ~${(0.01 * ethPrice * 0.0005).toFixed(4)} in fees.
+                    ⏳ Use the swap panel above to generate fees. A 1 MON swap generates ~${(1 * monPrice * 0.0005).toFixed(6)} in fees.
                   </span>
                 )}
               </div>
@@ -1568,7 +1649,6 @@ export function AngelPoolDashboard() {
               </div>
             )}
 
-            {/* How It Works */}
             <div style={{ padding: '12px', background: '#12121c', borderRadius: '8px', border: '1px solid #2d2d44' }}>
               <div style={{ fontSize: '11px', color: '#F8FAFC', fontWeight: 600, marginBottom: '8px' }}>How It Works</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

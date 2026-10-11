@@ -592,13 +592,13 @@ contract NoVCAngelHookV2 is BaseHookMinimal, IERC721Receiver {
     function createAngelPool() external nonReentrant returns (bytes32) {
         if (poolId != bytes32(0)) revert("Pool already created");
 
-        PoolKey memory key = PoolKey({
-            currency0: Currency.wrap(USDC),
-            currency1: Currency.wrap(NATIVE_MON),
-            fee: DEFAULT_FEE,
-            tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: address(this)
-        });
+PoolKey memory key = PoolKey({
+    currency0: Currency.wrap(NATIVE_MON),   // address(0)
+    currency1: Currency.wrap(USDC),
+    fee: DEFAULT_FEE,
+    tickSpacing: DEFAULT_TICK_SPACING,
+    hooks: address(this)
+});
 
         bytes32 newPoolId = keccak256(abi.encode(key));
         poolId = newPoolId;

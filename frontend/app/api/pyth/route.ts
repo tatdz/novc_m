@@ -3,118 +3,105 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
-const PYTH_HERMES_API = 'https://hermes.pyth.network'
+const PYTH_REST_URL = 'https://pyth-lazer.dourolabs.app/v1/latest_price'
+const PYTH_CHANNEL = 'fixed_rate@200ms'
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const feedId = searchParams.get('feedId')
-    
-    if (!feedId) {
-      return NextResponse.json(
-        { error: 'Feed ID required' },
-        { status: 400 }
-      )
-    }
-    
-    console.log('📡 Fetching Pyth price for:', feedId)
-    
-    // Fetch latest price
-    const response = await fetch(
-      `${PYTH_HERMES_API}/api/latest_price_feeds?ids[]=${feedId}`,
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    )
-    
-    if (!response.ok) {
-      console.error('Pyth API error:', response.status)
-      return NextResponse.json(
-        { error: 'Failed to fetch price' },
-        { status: response.status }
-      )
-    }
-    
-    const data = await response.json()
-    
-    if (!data || data.length === 0) {
-      return NextResponse.json(
-        { error: 'No price data found' },
-        { status: 404 }
-      )
-    }
-    
-    const priceData = data[0]
-    const price = Number(priceData.price.price) * Math.pow(10, priceData.price.expo)
-    
-    console.log('✅ Pyth price:', price)
-    
-    return NextResponse.json({
-      success: true,
-      feedId,
-      price,
-      conf: priceData.price.conf,
-      expo: priceData.price.expo,
-      publishTime: priceData.price.publish_time,
-    })
-    
-  } catch (error: any) {
-    console.error('❌ Pyth API error:', error)
-    return NextResponse.json(
-      { error: error.message || 'Failed to fetch price' },
-      { status: 500 }
-    )
+// Pyth Pro numeric feed IDs
+const FEED_IDS = {
+  USDC_USD: 7,
+} as const
+
+interface PythProResponse {
+  parsed?: {
+    timestampUs?: string | number
+    priceFeeds?: Array<{
+      priceFeedId: number
+      price: string | number
+      feedUpdateTimestamp: number
+    }>
+  }
+  leEcdsa?: {
+    encoding: string
+    data: string
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
-    const body = await request.json()
-    const { feedIds } = body
-    
-    if (!feedIds || !Array.isArray(feedIds)) {
+    const apiKey = process.env.PYTH_PRO_API_KEY
+    if (!apiKey) {
+      console.error('[Pyth Pro] PYTH_PRO_API_KEY is not set')
       return NextResponse.json(
-        { error: 'Feed IDs array required' },
-        { status: 400 }
+        { error: 'PYTH_PRO_API_KEY not configured on server' },
+        { status: 500 }
       )
     }
-    
-    console.log('📡 Fetching Pyth VAA for feeds:', feedIds.length)
-    
-    // Fetch price update data (VAA)
-    const idsQuery = feedIds.map(id => `ids[]=${id}`).join('&')
-    const response = await fetch(
-      `${PYTH_HERMES_API}/api/latest_vaas?${idsQuery}`,
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    )
-    
+
+    const feedIdList = [FEED_IDS.USDC_USD]
+
+    const response = await fetch(PYTH_REST_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        priceFeedIds: feedIdList,
+        channel: PYTH_CHANNEL,
+        properties: ['price', 'feedUpdateTimestamp'],
+        formats: ['leEcdsa'],
+        jsonBinaryEncoding: 'hex',
+      }),
+      // brief server-side cache so rapid refreshes don't hammer Pyth Pro
+      next: { revalidate: 2 },
+    })
+
     if (!response.ok) {
-      console.error('Pyth VAA API error:', response.status)
+      const text = await response.text().catch(() => '')
+      console.error('[Pyth Pro] upstream error', response.status, text.slice(0, 300))
       return NextResponse.json(
-        { error: 'Failed to fetch VAA' },
+        { error: `Pyth Pro returned ${response.status}` },
         { status: response.status }
       )
     }
-    
-    const data = await response.json()
-    
-    console.log('✅ Pyth VAA received')
-    
-    return NextResponse.json({
-      success: true,
-      updateData: data,
+
+    const data = (await response.json()) as PythProResponse
+
+    const feeds = data.parsed?.priceFeeds ?? []
+    if (feeds.length === 0) {
+      return NextResponse.json(
+        { error: 'Pyth Pro returned no priceFeeds' },
+        { status: 502 }
+      )
+    }
+
+    // Pyth Pro prices come pre-scaled; typical exponent is -8.
+    // If display values look off by 10x, adjust EXPO and redeploy.
+    const EXPO = -8
+
+    const prices = feeds.map((feed) => {
+      let feedName = 'UNKNOWN'
+      if (feed.priceFeedId === FEED_IDS.USDC_USD) feedName = 'USDC/USD'
+
+      return {
+        feedName,
+        feedId: feed.priceFeedId,
+        price: String(feed.price),
+        conf: '0',
+        expo: EXPO,
+        publishTime: Math.floor(Number(feed.feedUpdateTimestamp) / 1_000_000),
+      }
     })
-    
+
+    return NextResponse.json({
+      prices,
+      rawTimestamp: data.parsed?.timestampUs,
+      leEcdsa: data.leEcdsa, // only used if you later submit on-chain updates
+    })
   } catch (error: any) {
-    console.error('❌ Pyth VAA error:', error)
+    console.error('[Pyth Pro] error:', error)
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch VAA' },
+      { error: error.message || 'Failed to fetch Pyth Pro prices' },
       { status: 500 }
     )
   }

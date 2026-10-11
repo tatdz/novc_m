@@ -1279,7 +1279,7 @@ export const NOVC_ANGEL_HOOK_ABI = [
 // ============================================
 export const CONTRACT_ADDRESSES = {
   // deployed hook 
-  NOVC_ANGEL_HOOK: "0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0" as const,
+  NOVC_ANGEL_HOOK: "0x9d7CBeBe77a27D44BB0748C52462DeA763653fF0" as const,
   
   // Token addresses
   USDC: "0x534b2f3A21130d7a60830c2Df862319e593943A3" as const,
@@ -1308,7 +1308,7 @@ export const POOL_KEY = {
   hooks: CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK
 } as const;
 
-export const POOL_ID = "0x4dcd2ab926bedf4668df25be63e75dbed286bdec1e591faa14fb7609517f3f76";
+export const POOL_ID = "0x15af33761730cb1dd00f47eff431ad51cadfa664b53f68911f7cbea906f53d96";
 
 // ============================================
 // Helper Functions

@@ -1,3 +1,4 @@
+// app/api/rpc/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -45,7 +46,7 @@ interface RpcResult {
   isBlockRangeError: boolean
 }
 
-async function tryRpc(url: string, body: any, timeoutMs = 10000): Promise<RpcResult | null> {
+async function tryRpc(url: string, body: any, timeoutMs = 20000): Promise<RpcResult | null> {
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
