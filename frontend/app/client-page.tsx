@@ -5,7 +5,6 @@ import { useState, useMemo, useEffect, Suspense } from 'react'
 import { useAccount, useChainId, useBalance, useBlockNumber } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { formatUnits, type Address } from 'viem'
-import { useGatewayBalance } from '@/hooks/useGatewayBalance'
 import { useAuctionStore } from '@/lib/auctionStore'
 import { SUPPORTED_CHAINS, getUSDCAddress } from '@/lib/contracts'
 import dynamic from 'next/dynamic'
@@ -20,30 +19,25 @@ const PanelSkeleton = () => (
 )
 
 // Dynamic imports with loading states
-const AuctionCreationPanel = dynamic(() => import('@/components/AuctionCreationPanel'), { 
+const AuctionCreationPanel = dynamic(() => import('@/components/AuctionCreationPanel'), {
   ssr: false,
   loading: () => <PanelSkeleton />
 })
 
-const CCTPDepositPanel = dynamic(() => import('@/components/CCTPDepositPanel'), { 
-  ssr: false,
-  loading: () => <PanelSkeleton />
-})
-
-const BidPanel = dynamic(() => import('@/components/BidPanel'), { 
+const BidPanel = dynamic(() => import('@/components/BidPanel'), {
   ssr: false,
   loading: () => <PanelSkeleton />
 })
 
 const AngelPoolDashboard = dynamic(
   () => import('@/components/AngelPoolDashboard').then(mod => mod.AngelPoolDashboard),
-  { 
+  {
     ssr: false,
     loading: () => <PanelSkeleton />
   }
 )
 
-const SettleClient = dynamic(() => import('@/app/settle/settle-client'), { 
+const SettleClient = dynamic(() => import('@/app/settle/settle-client'), {
   ssr: false,
   loading: () => <PanelSkeleton />
 })
@@ -65,13 +59,12 @@ function NoVCLogo() {
 
 const panelStyle = { background: '#12121c', borderRadius: '12px', border: '1px solid #1e1e2e', padding: '16px' }
 
-type TabType = 'auctions' | 'pool' | 'bridge' | 'settle'
+type TabType = 'auctions' | 'pool' | 'settle'
 
 export default function ClientPage() {
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
   const { data: blockNumber } = useBlockNumber({ watch: true })
-  const { balance: gatewayBalance, refresh: refreshGateway } = useGatewayBalance()
   const { getAllAuctions } = useAuctionStore()
   const searchParams = useSearchParams()
 
@@ -86,7 +79,7 @@ export default function ClientPage() {
   // Handle query params for tab navigation
   useEffect(() => {
     const tab = searchParams.get('tab') as TabType | null
-    if (tab && ['auctions', 'pool', 'bridge', 'settle'].includes(tab)) {
+    if (tab && ['auctions', 'pool', 'settle'].includes(tab)) {
       setActiveTab(tab)
     }
   }, [searchParams])
@@ -184,7 +177,6 @@ export default function ClientPage() {
   const tabs: { key: TabType; label: string }[] = [
     { key: 'auctions', label: 'Auctions' },
     { key: 'pool', label: 'Angel Pool' },
-    { key: 'bridge', label: 'Bridge' },
     { key: 'settle', label: 'Settle' },
   ]
 
@@ -251,10 +243,7 @@ export default function ClientPage() {
             </div>
             <div style={panelStyle}>
               <Suspense fallback={<PanelSkeleton />}>
-                <BidPanel 
-                  refreshTrigger={refreshAuctionsTrigger} 
-                  onNavigateToBridge={() => handleTabChange('bridge')}
-                />
+                <BidPanel refreshTrigger={refreshAuctionsTrigger} />
               </Suspense>
             </div>
           </div>
@@ -265,23 +254,6 @@ export default function ClientPage() {
             <div style={panelStyle}>
               <Suspense fallback={<PanelSkeleton />}>
                 <AngelPoolDashboard />
-              </Suspense>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'bridge' && (
-          <div style={{ maxWidth: '500px', margin: '0 auto' }}>
-            <div style={panelStyle}>
-              <Suspense fallback={<PanelSkeleton />}>
-                <CCTPDepositPanel 
-                  gatewayBalance={gatewayBalance?.totalUSDC || 0}
-                  onRefreshGateway={refreshGateway}
-                  onDepositComplete={(amount, txHash) => {
-                    refetchBalance()
-                    refreshGateway()
-                  }} 
-                />
               </Suspense>
             </div>
           </div>

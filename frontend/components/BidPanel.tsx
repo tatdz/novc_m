@@ -5,12 +5,11 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import { parseUnits, formatUnits, type Address } from 'viem'
 import { monadTestnet } from 'viem/chains'
-import { useGatewayBalance } from '@/hooks/useGatewayBalance'
 import { useAuctionStore } from '@/lib/auctionStore'
 import { CCA_ABI, ERC20_ABI } from '@/lib/abis'
-import { 
-  getRevertReasonFromTx, 
-  checkAuctionPreConditions, 
+import {
+  getRevertReasonFromTx,
+  checkAuctionPreConditions,
   getMonadL2BlockNumber,
   getActualContractBlockNumber,
   verifyAuctionActiveOnChain
@@ -251,10 +250,9 @@ interface BidPanelProps {
   auctionAddress?: string
   onBidSubmitted?: (txHash: string) => void
   refreshTrigger?: number
-  onNavigateToBridge?: () => void 
 }
 
-export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubmitted, refreshTrigger = 0, onNavigateToBridge }: BidPanelProps) {
+export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubmitted, refreshTrigger = 0 }: BidPanelProps) {
   const router = useRouter()
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient()
@@ -283,13 +281,11 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
   const [loading, setLoading] = useState(false)
   const [showStored, setShowStored] = useState(false)
   const [manualRefresh, setManualRefresh] = useState(0)
-  
+
   // Block state
   const [l2BlockNumber, setL2BlockNumber] = useState<number | null>(null)
   const [contractBlockNumber, setContractBlockNumber] = useState<number | null>(null)
-  
-  const { balance: gatewayBalance, refresh: refreshGateway, loading: gatewayLoading } = useGatewayBalance()
-  
+
   // Get auctions with memo
   const allAuctions = useMemo(() => {
     return getAllAuctions()
@@ -304,7 +300,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         try {
           const l2 = await getMonadL2BlockNumber(publicClient)
           const contractBlock = await getActualContractBlockNumber(publicClient)
-          
+
           setL2BlockNumber(Number(l2))
           setContractBlockNumber(Number(contractBlock))
         } catch (err) {
@@ -312,7 +308,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         }
       }
     }
-    
+
     fetchBlocks()
     const interval = setInterval(fetchBlocks, 15000)
     return () => clearInterval(interval)
@@ -335,7 +331,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
   useEffect(() => {
     loadAuctionsFromStore()
   }, [loadAuctionsFromStore, refreshTrigger, manualRefresh])
-  
+
   // Filter active auctions
   const activeAuctions = useMemo(() => {
     if (!contractBlockNumber) return allAuctions
@@ -369,17 +365,17 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
     if (!auctionAddress || !publicClient || contractBlockNumber === null || l2BlockNumber === null) {
       return
     }
-    
+
     try {
       setLoading(true)
       setError(null)
-      
+
       // Check if this is a valid contract
       const code = await publicClient.getCode({ address: auctionAddress as Address })
       if (!code || code === '0x') {
         throw new Error('Address is not a contract')
       }
-      
+
       const [floorPriceQ96, tickSpacingQ96, currency, startBlock, endBlock, isGraduated] = await Promise.all([
         publicClient.readContract({
           address: auctionAddress as Address,
@@ -421,11 +417,11 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
 
       const floorPrice = formatFromQ96(floorPriceQ96 as bigint)
       const tickSpacing = formatFromQ96(tickSpacingQ96 as bigint)
-      
+
       const currentBlock = contractBlockNumber
       const isActiveByBlock = !isGraduated && currentBlock >= Number(startBlock) && currentBlock < Number(endBlock)
       const isEndedByBlock = currentBlock >= Number(endBlock)
-      
+
       const isActive = isActiveByBlock
       const isEnded = isEndedByBlock
 
@@ -460,19 +456,6 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
     await loadAuctionsFromStore()
     if (selectedAuctionAddress) {
       await loadAuctionDetails(selectedAuctionAddress)
-    }
-    refreshGateway()
-  }
-
-  // ============================================
-  // NAVIGATE TO CCTP DEPOSIT
-  // ============================================
-  const handleGoToBridge = () => {
-    if (onNavigateToBridge) {
-      onNavigateToBridge()
-    } else {
-      // Fallback if prop not provided
-      window.location.href = '/?tab=bridge'
     }
   }
 
@@ -525,7 +508,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
     const bidAmountNum = parseFloat(bidAmount)
     const bidPriceNum = parseFloat(bidPrice)
     const totalUSDC = bidAmountNum * bidPriceNum
-    
+
     if (totalUSDC < 0.000001) {
       setError(`Total bid too small. Current: ${totalUSDC.toFixed(6)} USDC`)
       return
@@ -555,7 +538,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         ],
         outputs: [{ name: 'bidId', type: 'uint256' as const }]
       }]
-      
+
       const bidArgs = [priceWei, amountWei, address, '0x'] as const
 
       const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address
@@ -567,10 +550,10 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         functionName: 'allowance',
         args: [address, PERMIT2]
       }) as bigint
-      
+
       if (allowance < totalUSDCWei) {
         const approveNonce = await getNextNonce(publicClient, address, 'usdc-approval')
-        
+
         const approveTx = await walletClient.writeContract({
           address: auctionDetails.currency,
           abi: ERC20_ABI,
@@ -609,9 +592,9 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         functionName: 'allowance',
         args: [address, auctionDetails.currency, selectedAuctionAddress as Address]
       }) as [bigint, number, number]
-      
+
       const now = Math.floor(Date.now() / 1000)
-      
+
       if (p2Amount < totalUSDCWei || p2Expiry < now) {
         const approveP2Abi = [{
           name: 'approve',
@@ -627,9 +610,9 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         }]
         const maxUint160 = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF')
         const farExpiry = BigInt(now + 86400 * 365)
-        
+
         const p2Nonce = await getNextNonce(publicClient, address, 'permit2-approval')
-        
+
         const p2Tx = await walletClient.writeContract({
           address: PERMIT2,
           abi: approveP2Abi,
@@ -648,7 +631,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
 
       // Submit the bid
       const bidNonce = await getNextNonce(publicClient, address, 'bid')
-      
+
       const bidTx = await walletClient.writeContract({
         address: selectedAuctionAddress as Address,
         abi: submitBid4ArgAbi,
@@ -658,7 +641,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
         nonce: bidNonce,
         chain: monadTestnet,
       })
-      
+
       const receipt = await publicClient.waitForTransactionReceipt({ hash: bidTx })
 
       if (receipt.status !== 'success') {
@@ -701,7 +684,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
       setBidAmount('')
       setBidPrice('')
       handleLoadStored()
-      
+
       if (onBidSubmitted) {
         onBidSubmitted(bidTx)
       }
@@ -726,7 +709,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
     )
   }
 
-  if (l2BlockNumber === null || contractBlockNumber === null || gatewayLoading) {
+  if (l2BlockNumber === null || contractBlockNumber === null) {
     return (
       <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
         Loading...
@@ -783,43 +766,6 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
           <span style={{ fontSize: '11px', color: auctionDetails.isActive ? '#4ADE80' : '#F87171' }}>
             {auctionDetails.isActive ? 'Active' : 'Ended'}
           </span>
-        </div>
-      )}
-
-      {/* Gateway Balance Display */}
-      {gatewayBalance && (
-        <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '12px', color: '#94A3B8' }}>Gateway Balance</span>
-            <span style={{ fontSize: '14px', fontWeight: 600, color: '#22C55E' }}>
-              ${gatewayBalance.totalUSDC.toFixed(2)} USDC
-            </span>
-          </div>
-          
-          {/* Chain Breakdown */}
-          <div style={{ marginTop: '8px', fontSize: '11px' }}>
-            {gatewayBalance.chains.filter(c => c.balanceFormatted > 0).map((chain, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#94A3B8' }}>
-                <span>{chain.chainName}:</span>
-                <span>${chain.balanceFormatted.toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Bridge Button */}
-          <button
-     onClick={handleGoToBridge}
-    style={{
-      ...smallBtnStyle,
-      width: '100%',
-      marginTop: '10px',
-      background: '#2d2d44',
-      color: '#60A5FA',
-      borderColor: '#3b3b5a'
-    }}
-  >
-    🔗 Bridge USDC
-  </button>
         </div>
       )}
 
@@ -893,7 +839,7 @@ export default function BidPanel({ auctionAddress: propAuctionAddress, onBidSubm
             {showStored ? 'Hide' : 'Show'}
           </button>
         </div>
-        
+
         {showStored && storedBids.length > 0 && (
           <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
             {storedBids.slice(0, 3).map((bid, idx) => (
