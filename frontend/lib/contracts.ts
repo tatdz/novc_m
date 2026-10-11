@@ -7,10 +7,10 @@ import { sepolia, monadTestnet, baseSepolia, arbitrumSepolia, optimismSepolia, p
 // ============================================
 const HARDCODED_ADDRESSES = {
   // NoVC Core
-  NEXT_PUBLIC_FACTORY_ADDRESS: '0x000000001F26a0044BaA66024e7b6599c61963F8' as Address,
+  NEXT_PUBLIC_FACTORY_ADDRESS: '0x7899770762d96c1F63cED8383C8B8C2dA16cD1b6' as Address,
   
   // Tokens
-  NEXT_PUBLIC_USDC_MONAD_TESTNET: '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address,
+  NEXT_PUBLIC_USDC_MONAD_TESTNET: '0x8699FC6ec5E9976fc5D6D3A8f23AAf8bA9ec0b65' as Address,
 
   // Pyth
   NEXT_PUBLIC_PYTH_ADDRESS: '0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379' as Address,
@@ -42,7 +42,7 @@ export const DEPLOYED_ADDRESSES = {
   USDC_ARC_TESTNET: '0x3600000000000000000000000000000000000000' as Address,
   
   // Uniswap Factory - For creating auctions
-  FACTORY: '0x000000001F26a0044BaA66024e7b6599c61963F8' as Address,
+  FACTORY: '0x7899770762d96c1F63cED8383C8B8C2dA16cD1b6' as Address,
   
   // Pyth Oracle
   PYTH: '0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379' as Address,

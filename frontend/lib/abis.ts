@@ -1308,7 +1308,7 @@ export const POOL_KEY = {
   hooks: CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK
 } as const;
 
-export const POOL_ID = "0x002b8ad258154f5e44e8f2960e2aa0671f88b857037c8e089d8c463e7b1150f5";
+export const POOL_ID = "0x4dcd2ab926bedf4668df25be63e75dbed286bdec1e591faa14fb7609517f3f76";
 
 // ============================================
 // Helper Functions

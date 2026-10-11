@@ -374,7 +374,7 @@ export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreati
               textDecoration: 'none', 
               textAlign: 'center' 
             }}>
-            View on Uniscan
+            View on Monadscan
           </a>
         )}
 

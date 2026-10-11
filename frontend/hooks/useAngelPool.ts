@@ -485,96 +485,119 @@ console.log('[AngelPool] Share calculation debug:', {
   }, [hookContract, refreshPoolInfo, refreshInvestorInfo])
 
   // Deposit USDC 
-  const depositUSDC = useCallback(async (amount: string) => {
-    if (!hookContract) throw new Error('Contract not initialized')
-    if (!walletClient) throw new Error('Wallet not connected')
-    if (!publicClient) throw new Error('Public client not available')
-    if (!isPoolInitialized) throw new Error('Pool not initialized. Call createAngelPool() first')
-    setLoading(true)
-    setError(null)
-    try {
-      const amountWei = BigInt(amount)
-      const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
-      const usdcAddress = CONTRACT_ADDRESSES.USDC_MONAD_TESTNET as Address
-      const userAddress = walletClient.account.address
+const depositUSDC = useCallback(async (amount: string) => {
+  if (!hookContract) throw new Error('Contract not initialized')
+  if (!walletClient) throw new Error('Wallet not connected')
+  if (!publicClient) throw new Error('Public client not available')
+  if (!isPoolInitialized) throw new Error('Pool not initialized. Call createAngelPool() first')
 
-      const balance = await publicClient.readContract({
+  setLoading(true)
+  setError(null)
+
+  try {
+    const amountWei = BigInt(amount)
+    const hookAddress = CONTRACT_ADDRESSES.NOVC_ANGEL_HOOK as Address
+    const usdcAddress = USDC_ADDRESS   // ✅ USE THE HOOK'S USDC
+    const userAddress = walletClient.account.address
+
+    // 1. Balance check against the correct USDC
+    const balance = await publicClient.readContract({
+      address: usdcAddress,
+      abi: [{ name:'balanceOf', type:'function', stateMutability:'view',
+              inputs:[{name:'account',type:'address'}],
+              outputs:[{name:'',type:'uint256'}] }],
+      functionName: 'balanceOf',
+      args: [userAddress],
+    }) as bigint
+    console.log('[AngelPool] USDC balance:', formatUnits(balance, 6))
+
+    if (balance < amountWei) {
+      throw new Error(`Insufficient USDC balance. Have ${formatUnits(balance, 6)}, need ${formatUnits(amountWei, 6)}`)
+    }
+
+    // 2. Direct ERC20 allowance check — hook uses transferFrom, NOT Permit2
+    const allowance = await publicClient.readContract({
+      address: usdcAddress,
+      abi: [{ name:'allowance', type:'function', stateMutability:'view',
+              inputs:[{name:'owner',type:'address'},{name:'spender',type:'address'}],
+              outputs:[{name:'',type:'uint256'}] }],
+      functionName: 'allowance',
+      args: [userAddress, hookAddress],
+    }) as bigint
+    console.log('[AngelPool] Current allowance hook ← user:', formatUnits(allowance, 6))
+
+    // 3. Approve hook directly if needed
+    if (allowance < amountWei) {
+      console.log('[AngelPool] Approving USDC → hook ...')
+      const approveHash = await walletClient.writeContract({
         address: usdcAddress,
-        abi: [{ name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
-        functionName: 'balanceOf',
-        args: [userAddress]
-      }) as bigint
-      console.log('[AngelPool] User USDC balance:', formatUnits(balance, 6))
+        abi: [{ name:'approve', type:'function', stateMutability:'nonpayable',
+                inputs:[{name:'spender',type:'address'},{name:'amount',type:'uint256'}],
+                outputs:[{name:'',type:'bool'}] }],
+        functionName: 'approve',
+        args: [hookAddress, (1n << 256n) - 1n],   // max — one-time per user
+        chain: walletClient.chain,
+        account: userAddress,
+      })
+      console.log('[AngelPool] Approve tx:', approveHash)
 
-      if (balance < amountWei) {
-        throw new Error(`Insufficient USDC balance`)
-      }
+      const rc = await publicClient.waitForTransactionReceipt({ hash: approveHash, confirmations: 1 })
+      if (rc.status !== 'success') throw new Error('USDC approve tx reverted')
 
-      const currentAllowance = await publicClient.readContract({
+      // re-read allowance to confirm it landed
+      const newAllowance = await publicClient.readContract({
         address: usdcAddress,
-        abi: [{ name: 'allowance', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] }],
+        abi: [{ name:'allowance', type:'function', stateMutability:'view',
+                inputs:[{name:'owner',type:'address'},{name:'spender',type:'address'}],
+                outputs:[{name:'',type:'uint256'}] }],
         functionName: 'allowance',
-        args: [userAddress, hookAddress]
+        args: [userAddress, hookAddress],
       }) as bigint
-      console.log('[AngelPool] Current USDC allowance:', formatUnits(currentAllowance, 6))
+      console.log('[AngelPool] New allowance:', formatUnits(newAllowance, 6))
+      if (newAllowance < amountWei) throw new Error('Allowance did not update')
 
-      if (currentAllowance < amountWei) {
-        console.log('[AngelPool] Approving USDC via writeContract...')
-        const approveHash = await walletClient.writeContract({
-          address: usdcAddress,
-          abi: [{ name: 'approve', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ name: '', type: 'bool' }] }],
-          functionName: 'approve',
-          args: [hookAddress, amountWei],
-          chain: walletClient.chain,
-          account: userAddress,
-        })
-        console.log('[AngelPool] Approval tx:', approveHash)
-        await publicClient.waitForTransactionReceipt({ hash: approveHash, confirmations: 1 })
-        console.log('[AngelPool] USDC approved')
-        await new Promise(resolve => setTimeout(resolve, 4000))
-      }
+      // give RPC a beat on Monad
+      await new Promise(r => setTimeout(r, 2000))
+    }
 
-      console.log('[AngelPool] Depositing USDC...')
-      try {
-        await publicClient.simulateContract({
-          address: hookAddress,
-          abi: NOVC_ANGEL_HOOK_ABI,
-          functionName: 'depositUSDC',
-          args: [amountWei],
-          account: userAddress,
-        })
-      } catch (simErr: any) {
-        console.error('[AngelPool] Deposit simulation failed:', simErr)
-        throw new Error(decodeRevertReason(simErr) || 'Deposit would fail on-chain. Check pool status and USDC balance.')
-      }
-      const depositHash = await retryWriteContract(walletClient, {
+    // 4. Simulate deposit against the correct USDC state
+    try {
+      await publicClient.simulateContract({
         address: hookAddress,
         abi: NOVC_ANGEL_HOOK_ABI,
         functionName: 'depositUSDC',
         args: [amountWei],
-        chain: walletClient.chain,
         account: userAddress,
-        gas: 500000n,
-      }, 'depositUSDC')
-      
-      console.log('[AngelPool] Deposit tx:', depositHash)
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash, confirmations: 1 })
-      
-      if (receipt.status !== 'success') {
-        throw new Error('Deposit reverted on-chain')
-      }
-      
-      console.log('[AngelPool] Deposit confirmed')
-      await refreshPoolInfo()
-      await refreshInvestorInfo()
-    } catch (err: any) {
-      console.error('[AngelPool] Deposit failed:', err)
-      setError(decodeRevertReason(err))
-      throw err
-    } finally {
-      setLoading(false)
+      })
+    } catch (simErr: any) {
+      console.error('[AngelPool] Deposit simulation failed:', simErr)
+      throw new Error(decodeRevertReason(simErr) || 'Deposit would fail on-chain')
     }
-  }, [hookContract, walletClient, publicClient, isPoolInitialized, refreshPoolInfo, refreshInvestorInfo])
+
+    // 5. Execute deposit
+    const depositHash = await retryWriteContract(walletClient, {
+      address: hookAddress,
+      abi: NOVC_ANGEL_HOOK_ABI,
+      functionName: 'depositUSDC',
+      args: [amountWei],
+      chain: walletClient.chain,
+      account: userAddress,
+      gas: 500000n,
+    }, 'depositUSDC')
+
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: depositHash, confirmations: 1 })
+    if (receipt.status !== 'success') throw new Error('Deposit reverted on-chain')
+
+    await refreshPoolInfo()
+    await refreshInvestorInfo()
+  } catch (err: any) {
+    console.error('[AngelPool] Deposit failed:', err)
+    setError(decodeRevertReason(err))
+    throw err
+  } finally {
+    setLoading(false)
+  }
+}, [hookContract, walletClient, publicClient, isPoolInitialized, refreshPoolInfo, refreshInvestorInfo])
 
   // Deposit ETH
   const depositETH = useCallback(async (amount: string) => {
@@ -874,7 +897,7 @@ console.log('[AngelPool] Share calculation debug:', {
       const FAR_FUTURE = 4102444800 // Jan 1 2100
       
       const tx = await permit2Contract.approve(
-        CONTRACT_ADDRESSES.USDC_MONAD_TESTNET,
+        CONTRACT_ADDRESSES.USDC,
         auctionAddress,
         amount,
         FAR_FUTURE,

@@ -55,7 +55,7 @@ interface PythPrice {
 }
 
 // Contract addresses for swap functionality
-const POOL_SWAP_TEST = '0x9140a78c1A137c7fF1c151EC8231272aF78a99A4' as Address
+const POOL_SWAP_TEST = '0xc4006B415D3625047E039e16C13766483CEE42cD' as Address
 const POOL_MANAGER = '0x451D64ab3b650040d2aE1886602b97ed6eDc643d' as Address
 const HOOK_ADDRESS = '0x8f93D9b74E8034FfA21bF423A43aD0A67a48BfF0' as Address
 const USDC_ADDRESS = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
@@ -103,11 +103,14 @@ export function AngelPoolDashboard() {
   const [swapTxHash, setSwapTxHash] = useState<string | null>(null)
   const [feesLoading, setFeesLoading] = useState(false)
 
-  const { data: usdcBalance } = useBalance({
-    address,
-    token: CONTRACT_ADDRESSES.USDC_MONAD_TESTNET,
-    chainId: CONTRACT_ADDRESSES.CHAIN_ID
-  })
+const HOOK_USDC = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
+
+const { data: usdcBalance } = useBalance({
+  address,
+  token: HOOK_USDC,
+  chainId: CONTRACT_ADDRESSES.CHAIN_ID
+})
+
 
   // ==================== AUTO-REFRESH EFFECT ====================
   useEffect(() => {
@@ -727,7 +730,7 @@ export function AngelPoolDashboard() {
   }
 
   const formatExplorerUrl = (txHash: string) => {
-    return `https://sepolia.uniscan.xyz/tx/${txHash}`
+    return `https://testnet.monadscan.com/tx/${txHash}`
   }
 
   const availableAuctions = getAllAuctions().filter((a: any) => currentBlockNumber === 0 || a.endBlock > currentBlockNumber)
