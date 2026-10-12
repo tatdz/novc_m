@@ -1,4 +1,4 @@
-//components/AngelPoolDashboard.tsx
+// components/AngelPoolDashboard.tsx
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -52,18 +52,14 @@ interface PythPrice {
   feedName: string
 }
 
-// Contract addresses for swap functionality
 const POOL_SWAP_TEST = '0xc4006B415D3625047E039e16C13766483CEE42cD' as Address
 const POOL_MANAGER = '0x451D64ab3b650040d2aE1886602b97ed6eDc643d' as Address
 const HOOK_ADDRESS = '0xD242803aE1840bB5FaC91EcbBC03B26BcB2eFFF0' as Address
 const USDC_ADDRESS = '0x534b2f3A21130d7a60830c2Df862319e593943A3' as Address
 const DIRECT_SWAP_ADDRESS = '0x691549DE0D284919Ae0ee8387d91F97511cD5269' as Address
 
-// Pyth on-chain contract (Monad testnet) — used for MON/USD because
-// Pyth Pro doesn't grant this feed to our key.
 const PYTH_CONTRACT = '0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379' as Address
 
-// ABI for Pyth's `getPriceNoOlderThan` view function.
 const PYTH_ABI = [{
   name: 'getPriceNoOlderThan',
   type: 'function',
@@ -287,28 +283,25 @@ export function AngelPoolDashboard() {
   // ==================== EXECUTE SWAP ====================
   const executeSwap = async () => {
     if (!address || !walletClient || !publicClient) {
-      setSwapError('Wallet not connected')
+      setSwapError('Connect your wallet first')
       console.error('[Swap] Wallet not connected')
       return
     }
 
     if (!swapAmount || parseFloat(swapAmount) <= 0) {
-      setSwapError('Enter valid amount')
+      setSwapError('Enter an amount')
       return
     }
 
     const amountInWei = parseUnits(swapAmount, 18)
 
-    // Reject swaps smaller than 0.0001 MON — they round to 0 USDC output
-    // and the pool's delta check reverts with "unexpected USDC delta".
     if (amountInWei < 100000000000000n) {
-      setSwapError('Min swap amount is 0.0001 MON')
+      setSwapError('Min is 0.0001 MON')
       return
     }
 
-    // Cap at 1 MON — the pool can absorb roughly this much before being drained.
     if (amountInWei > 1000000000000000000n) {
-      setSwapError('Max swap amount is 1 MON')
+      setSwapError('Max is 1 MON')
       return
     }
 
@@ -321,7 +314,7 @@ export function AngelPoolDashboard() {
       console.log('[Swap] Using DirectSwap contract at:', DIRECT_SWAP_ADDRESS)
       console.log('[Swap] Swap amount:', swapAmount, 'MON')
 
-      setSwapStatus('Executing swap...')
+      setSwapStatus('Swapping...')
 
       const txHash = await walletClient.writeContract({
         address: DIRECT_SWAP_ADDRESS,
@@ -342,7 +335,7 @@ export function AngelPoolDashboard() {
 
       console.log('[Swap] Transaction sent:', txHash)
       setSwapTxHash(txHash)
-      setSwapStatus('Swap submitted, waiting for confirmation...')
+      setSwapStatus('Confirming...')
 
       const receipt = await publicClient.waitForTransactionReceipt({
         hash: txHash,
@@ -352,7 +345,7 @@ export function AngelPoolDashboard() {
       console.log('[Swap] Transaction receipt:', receipt)
 
       if (receipt.status === 'success') {
-        setSwapStatus('Swap completed successfully!')
+        setSwapStatus('Done')
         console.log('[Swap] Swap successful!')
 
         await new Promise(resolve => setTimeout(resolve, 2000))
@@ -365,7 +358,7 @@ export function AngelPoolDashboard() {
         setSwapAmount('')
       } else {
         console.error('[Swap] Transaction failed:', receipt)
-        setSwapError('Swap transaction failed - check explorer for details')
+        setSwapError('Swap failed — check the explorer')
       }
     } catch (err: any) {
       console.error('[Swap] Swap failed with error:', err)
@@ -373,7 +366,7 @@ export function AngelPoolDashboard() {
       let errorMessage = err?.shortMessage || err?.message || 'Swap failed'
 
       if (err?.message?.includes('execution reverted')) {
-        errorMessage = 'Transaction reverted - check if you have enough MON'
+        errorMessage = 'Reverted — check your MON balance'
       }
 
       setSwapError(errorMessage)
@@ -384,9 +377,6 @@ export function AngelPoolDashboard() {
   }
 
   // ==================== PYTH PRICES ====================
-  // MON/USD  → on-chain Pyth contract (Pyth Pro doesn't grant this feed to our key)
-  // USDC/USD → Pyth Pro REST via /api/pyth proxy (server-side API key)
-  // Both have hardcoded fallbacks so the UI never breaks.
   const fetchPythPrices = async () => {
     if (!publicClient) {
       console.warn('[Pyth] publicClient not ready yet')
@@ -418,7 +408,7 @@ export function AngelPoolDashboard() {
         err?.shortMessage || err?.message
       )
       monEntry = {
-        price: '2702095',   // last-verified $0.02702095
+        price: '2702095',
         conf: '0',
         expo: -8,
         publishTime: Math.floor(Date.now() / 1000),
@@ -454,7 +444,7 @@ export function AngelPoolDashboard() {
         err?.message
       )
       usdcEntry = {
-        price: '100000000',   // $1.00000000
+        price: '100000000',
         conf: '0',
         expo: -8,
         publishTime: Math.floor(Date.now() / 1000),
@@ -468,18 +458,14 @@ export function AngelPoolDashboard() {
     setPythLoading(false)
   }
 
-  // Auto-fetch prices when entering the Oracle tab
   useEffect(() => {
     if (activeSection === 'oracle') fetchPythPrices()
   }, [activeSection])
 
-  // Also fetch once on mount (so header MON price is available earlier)
   useEffect(() => {
     if (isConnected && publicClient) fetchPythPrices()
   }, [isConnected, publicClient])
 
-  // Periodic refresh of MON/USD every 15s regardless of tab, so the header
-  // always shows a fresh price.
   useEffect(() => {
     if (!isConnected || !publicClient) return
     const interval = setInterval(() => {
@@ -503,7 +489,7 @@ export function AngelPoolDashboard() {
       }
       setDepositAmount('')
 
-      setSuccess(prev => (prev || '') + ' — Waiting for confirmation...')
+      setSuccess(prev => (prev || '') + ' — Confirming...')
       await new Promise(resolve => setTimeout(resolve, 5000))
 
       await refreshPoolInfo()
@@ -534,12 +520,12 @@ export function AngelPoolDashboard() {
           if (msg.includes('No idle funds')) {
             setSuccess(`✅ Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — already allocated`)
           } else {
-            setSuccess(`Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — Click "Allocate" to split 30/70`)
+            setSuccess(`Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — click Allocate to split 30/70`)
           }
           triggerRefresh()
         }
       } else {
-        setSuccess(`✅ Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — allocated 30/70 automatically`)
+        setSuccess(`✅ Deposited ${depositAmount} ${depositType === 'usdc' ? 'USDC' : 'MON'} — allocated 30/70`)
         await refreshPoolInfo()
         await refreshInvestorInfo()
         await refreshAuctionsFromContract()
@@ -595,7 +581,7 @@ export function AngelPoolDashboard() {
       }
 
       if (idleNow <= 0) {
-        setLocalError('No idle funds — deposits are already allocated 30/70.')
+        setLocalError('No idle funds — deposits are already split 30/70.')
         return
       }
 
@@ -607,7 +593,7 @@ export function AngelPoolDashboard() {
       console.log('[Allocate] Allocating slices...')
       await allocateSlices()
 
-      setSuccess('Allocated: 30% APY / 70% Auction')
+      setSuccess('Allocated: 30% yield / 70% rounds')
       await refreshAuctionsFromContract()
       triggerRefresh()
       setTimeout(() => setSuccess(null), 3000)
@@ -625,7 +611,7 @@ export function AngelPoolDashboard() {
     const amountNum = parseFloat(proposalAmount)
     const auctionSlice = hookPoolInfo ? parseFloat(hookPoolInfo.auctionSlice) : 0
     if (amountNum > auctionSlice) {
-      setLocalError(`Insufficient auction funds. Available: $${auctionSlice.toFixed(2)}. Deposit more USDC first, then allocate.`)
+      setLocalError(`Not enough in the rounds slice. Available: $${auctionSlice.toFixed(2)}. Deposit more USDC, then allocate.`)
       return
     }
     try {
@@ -635,7 +621,7 @@ export function AngelPoolDashboard() {
 
       console.log('[Propose] Sending proposal...')
       await proposeAuction(proposalAuction as any, amountWei.toString(), '0')
-      setSuccess('Investment proposed! Voting open.')
+      setSuccess('Round suggested. Voting is open.')
       setProposalAuction('')
       setProposalAmount('')
 
@@ -647,7 +633,7 @@ export function AngelPoolDashboard() {
       const msg = err?.reason || err?.message || 'Proposal failed'
       console.error('[Propose] Error:', err)
       if (msg.includes('Not enough auction funds')) {
-        setLocalError('Auction slice empty. Deposit USDC and allocate before proposing.')
+        setLocalError('Rounds slice is empty. Deposit USDC and allocate before proposing.')
       } else {
         setLocalError(msg)
       }
@@ -678,7 +664,7 @@ export function AngelPoolDashboard() {
   // ==================== EXECUTE BID HANDLER ====================
   const handleExecuteBid = async (auctionId: number) => {
     if (!publicClient || !walletClient || !address || !hookContract) {
-      setLocalError('Wallet not connected or contract not initialized')
+      setLocalError('Connect your wallet first')
       return
     }
 
@@ -758,7 +744,7 @@ export function AngelPoolDashboard() {
         })
 
         console.log('[ExecuteBid] Permit2 approval tx:', permit2ApproveHash)
-        setSuccess('Approving Permit2 (one-time)...')
+        setSuccess('Approving once...')
 
         await publicClient.waitForTransactionReceipt({ hash: permit2ApproveHash })
         console.log('[ExecuteBid] Permit2 approved successfully')
@@ -787,13 +773,13 @@ export function AngelPoolDashboard() {
       })
 
       console.log('[ExecuteBid] Transaction sent:', hash)
-      setSuccess('Bid execution initiated...')
+      setSuccess('Placing the bid...')
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
       if (receipt.status === 'success') {
         const explorerUrl = `https://testnet.monadscan.com/tx/${hash}`
-        setSuccess(`✅ Bid executed successfully! View on explorer: ${explorerUrl}`)
+        setSuccess(`✅ Bid placed. View: ${explorerUrl}`)
         console.log('[ExecuteBid] Success! Explorer:', explorerUrl)
         await new Promise(resolve => setTimeout(resolve, 2000))
         await refreshAuctionsFromContract()
@@ -805,7 +791,7 @@ export function AngelPoolDashboard() {
     } catch (err: any) {
       console.error('[ExecuteBid] Error:', err)
 
-      let errorMessage = err?.message || 'Failed to execute bid'
+      let errorMessage = err?.message || 'Could not place the bid'
 
       if (err?.data) {
         console.log('[ExecuteBid] Revert data:', err.data)
@@ -813,21 +799,21 @@ export function AngelPoolDashboard() {
       }
 
       if (err?.message?.includes('0x7939f424')) {
-        errorMessage = 'TransferFromFailed - USDC transfer issue'
+        errorMessage = 'TransferFromFailed — USDC transfer issue'
       } else if (err?.message?.includes('0xc8731608')) {
-        errorMessage = 'InsufficientAllowance - approval issue'
+        errorMessage = 'InsufficientAllowance — approval issue'
       } else if (err?.message?.includes('0xfb8f41b2')) {
-        errorMessage = 'Auction not started yet'
+        errorMessage = 'Round not started yet'
       } else if (err?.message?.includes('0xec5a2e1b')) {
-        errorMessage = 'Auction has already ended'
+        errorMessage = 'Round has already ended'
       } else if (err?.message?.includes('0x5b448f5b')) {
-        errorMessage = 'Tokens not received by auction'
+        errorMessage = 'Shares not received by the round yet'
       } else if (err?.message?.includes('0xTotalValueMismatch')) {
-        errorMessage = 'Accounting mismatch - call recoverAccounting()'
+        errorMessage = 'Accounting mismatch — call recoverAccounting()'
       } else if (err?.message?.includes('0xPrecisionLoss')) {
-        errorMessage = 'Math precision loss - cannot execute'
+        errorMessage = 'Math precision loss — cannot place the bid'
       } else if (err?.message?.includes('0xd81b2f2e')) {
-        errorMessage = 'AllowanceExpired - Permit2 allowance issue'
+        errorMessage = 'AllowanceExpired — Permit2 allowance issue'
       }
 
       setLocalError(errorMessage)
@@ -847,7 +833,7 @@ export function AngelPoolDashboard() {
         refreshAuctionsFromContract(),
         fetchPythPrices()
       ])
-      setSuccess('Data refreshed')
+      setSuccess('Refreshed')
       triggerRefresh()
       setTimeout(() => setSuccess(null), 2000)
     } catch (err) {
@@ -873,9 +859,6 @@ export function AngelPoolDashboard() {
     return (shareRaw / 100) * apySliceVal
   })()
 
-  // Fee display — returns a complete string including the leading $.
-  // For sub-6-decimal amounts, shows both the USDC figure and the wei value
-  // so 1-2 wei fees from testnet-sized swaps are still visible.
   const formatFeeDisplay = (fee: string | null): string => {
     if (!fee) return '$0.000000'
     const numFee = parseFloat(fee)
@@ -888,7 +871,6 @@ export function AngelPoolDashboard() {
     return `$${numFee.toFixed(6)}`
   }
 
-  // Read MON price from the loaded Pyth prices, fall back to last-known value.
   const getMonPrice = useCallback((): number => {
     const monPriceFeed = pythPrices.find(p => p.feedName === 'MON/USD')
     if (monPriceFeed) {
@@ -907,19 +889,19 @@ export function AngelPoolDashboard() {
       setLocalError(null)
       const amountMicro = Math.floor(investorAPYValue * 1e6)
       if (amountMicro <= 0) {
-        setLocalError('APY earnings too small to claim')
+        setLocalError('Earnings too small to claim')
         return
       }
       await withdrawUSDC(amountMicro.toString())
-      setSuccess(`Claimed $${investorAPYValue.toFixed(4)} APY earnings`)
+      setSuccess(`Claimed $${investorAPYValue.toFixed(4)} earnings`)
       await refreshPoolInfo()
       await refreshInvestorInfo()
       triggerRefresh()
       setTimeout(() => setSuccess(null), 5000)
     } catch (err: any) {
-      const msg = err?.reason || err?.message || 'APY claim failed'
+      const msg = err?.reason || err?.message || 'Claim failed'
       if (msg.includes('revert')) {
-        setLocalError('Withdrawal reverted. APY funds may be locked in active liquidity. Try a smaller amount via the Withdraw button.')
+        setLocalError('Withdrawal reverted. Earnings may be locked in active liquidity. Try a smaller amount via Withdraw.')
       } else {
         setLocalError(msg)
       }
@@ -931,7 +913,7 @@ export function AngelPoolDashboard() {
   if (!isConnected) {
     return (
       <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
-        Connect wallet to view pool
+        Connect to view the pool
       </div>
     )
   }
@@ -950,14 +932,14 @@ export function AngelPoolDashboard() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
           <span style={{ fontSize: '16px' }}>ℹ️</span>
-          <span style={{ fontWeight: 600, color: '#A78BFA' }}>How to use the Angel Pool:</span>
+          <span style={{ fontWeight: 600, color: '#A78BFA' }}>How the pool works</span>
         </div>
         <ol style={{ margin: '4px 0 0 24px', color: '#94A3B8', fontSize: '11px' }}>
-          <li>Deposit USDC or MON (funds go to Idle state)</li>
-          <li>Click "Allocate" to split 30% APY / 70% Auction</li>
-          <li>30% APY slice earns <strong style={{ color: '#4ADE80' }}>0.05% fees</strong> when people trade on Uniswap v4</li>
-          <li>70% Auction slice lets you propose and vote on startup investments</li>
-          <li><span style={{ color: '#FBBF24' }}>⏱️ Updates appear every 10 seconds - page auto-refreshes</span></li>
+          <li>Deposit money — it starts in the idle balance</li>
+          <li>Split it 30% to yield / 70% to rounds</li>
+          <li>Yield earns a small fee on every trade</li>
+          <li>Rounds slice lets you suggest and vote on deals</li>
+          <li><span style={{ color: '#FBBF24' }}>⏱️ Refreshes every 10 seconds</span></li>
         </ol>
       </div>
 
@@ -967,7 +949,7 @@ export function AngelPoolDashboard() {
           <span style={{ fontSize: '18px' }}>🏊</span>
           <span style={{ fontWeight: 600, color: '#F8FAFC', fontSize: '16px' }}>Angel Pool</span>
           <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(139,92,246,0.1)', color: '#A78BFA' }}>
-            {hookPoolInfo?.totalInvestors || 0} investor{parseInt(hookPoolInfo?.totalInvestors || '0') !== 1 ? 's' : ''}
+            {hookPoolInfo?.totalInvestors || 0} member{parseInt(hookPoolInfo?.totalInvestors || '0') !== 1 ? 's' : ''}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -1024,12 +1006,12 @@ export function AngelPoolDashboard() {
             <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Liquid Pool (USDC)</div>
             <div style={{ fontSize: '20px', fontWeight: 600, color: '#F8FAFC' }}>${parseFloat(hookPoolInfo.totalValue).toFixed(2)}</div>
             <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
-              MON Price: ${monPrice.toFixed(4)}
+              MON price: ${monPrice.toFixed(4)}
             </div>
           </div>
 
           <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '12px' }}>
-            <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Your Total Holdings</div>
+            <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Your Holdings</div>
             {investorInfo ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <div>
@@ -1037,7 +1019,7 @@ export function AngelPoolDashboard() {
                   <span style={{ fontSize: '16px', fontWeight: 600, color: '#F8FAFC' }}>${parseFloat(investorInfo.usdcBalance).toFixed(2)}</span>
                   {parseFloat(investorInfo.usdcBalance) > parseFloat(hookPoolInfo.totalValue) && (
                     <span style={{ fontSize: '10px', color: '#FBBF24', marginLeft: '4px' }}>
-                      (${(parseFloat(investorInfo.usdcBalance) - parseFloat(hookPoolInfo.totalValue)).toFixed(2)} in auctions)
+                      (${(parseFloat(investorInfo.usdcBalance) - parseFloat(hookPoolInfo.totalValue)).toFixed(2)} in rounds)
                     </span>
                   )}
                 </div>
@@ -1055,19 +1037,19 @@ export function AngelPoolDashboard() {
           </div>
 
           <div style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(99,102,241,0.08))', borderRadius: '8px', padding: '12px', border: '1px solid rgba(139,92,246,0.15)' }}>
-            <div style={{ fontSize: '10px', color: '#94A3B8', marginBottom: '4px' }}>Pool Allocation</div>
+            <div style={{ fontSize: '10px', color: '#94A3B8', marginBottom: '4px' }}>Allocation</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '11px', color: '#60A5FA' }}>APY Slice (30%)</span>
+                <span style={{ fontSize: '11px', color: '#60A5FA' }}>Yield (30%)</span>
                 <span style={{ fontSize: '14px', fontWeight: 600, color: '#60A5FA' }}>${parseFloat(hookPoolInfo.apySlice).toFixed(2)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '11px', color: '#A78BFA' }}>Auction Slice (70%)</span>
+                <span style={{ fontSize: '11px', color: '#A78BFA' }}>Rounds (70%)</span>
                 <span style={{ fontSize: '14px', fontWeight: 600, color: '#A78BFA' }}>${parseFloat(hookPoolInfo.auctionSlice).toFixed(2)}</span>
               </div>
               {parseFloat(hookPoolInfo.idleSlice) > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2px', paddingTop: '2px', borderTop: '1px solid #2d2d44' }}>
-                  <span style={{ fontSize: '10px', color: '#FBBF24' }}>Idle (unallocated)</span>
+                  <span style={{ fontSize: '10px', color: '#FBBF24' }}>Idle</span>
                   <span style={{ fontSize: '12px', color: '#FBBF24' }}>${parseFloat(hookPoolInfo.idleSlice).toFixed(2)}</span>
                 </div>
               )}
@@ -1080,7 +1062,7 @@ export function AngelPoolDashboard() {
       {idleSliceVal > 0 && (
         <button onClick={handleAllocate} disabled={isAllocating}
           style={{ padding: '8px', background: 'linear-gradient(135deg, rgba(251,191,36,0.15), rgba(245,158,11,0.15))', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '6px', color: '#FBBF24', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-          {isAllocating ? 'Allocating...' : `Allocate $${idleSliceVal.toFixed(2)} Idle Funds (30% APY / 70% Auction)`}
+          {isAllocating ? 'Allocating...' : `Allocate $${idleSliceVal.toFixed(2)} (30% yield / 70% rounds)`}
         </button>
       )}
 
@@ -1094,7 +1076,7 @@ export function AngelPoolDashboard() {
               color: activeSection === s ? '#F8FAFC' : '#64748B',
               fontSize: '12px', fontWeight: activeSection === s ? 500 : 400
             }}>
-            {s === 'deposit' ? 'Deposit / Withdraw' : s === 'vote' ? 'Vote on Startups' : 'Oracle & Yield'}
+            {s === 'deposit' ? 'Money' : s === 'vote' ? 'Votes' : 'Yield'}
           </button>
         ))}
       </div>
@@ -1149,7 +1131,7 @@ export function AngelPoolDashboard() {
 
           <div style={{ padding: '10px', background: 'rgba(96,165,250,0.06)', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.1)' }}>
             <div style={{ fontSize: '10px', color: '#94A3B8', lineHeight: '1.6' }}>
-              Deposits auto-allocate: <span style={{ color: '#60A5FA' }}>30% APY</span> (Uniswap v4 swap fees) + <span style={{ color: '#A78BFA' }}>70% Auction</span> (startup investments via voting).
+              Deposits auto-split: <span style={{ color: '#60A5FA' }}>30% yield</span> (swap fees) + <span style={{ color: '#A78BFA' }}>70% rounds</span> (community-backed investments).
             </div>
           </div>
         </div>
@@ -1161,13 +1143,13 @@ export function AngelPoolDashboard() {
           {auctionSliceVal === 0 && idleSliceVal === 0 && (
             <div style={{ padding: '20px', background: 'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(99,102,241,0.06))', borderRadius: '12px', border: '1px solid rgba(139,92,246,0.2)', textAlign: 'center' }}>
               <div style={{ fontSize: '28px', marginBottom: '10px' }}>💰</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC', marginBottom: '4px' }}>Fund the Pool First</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC', marginBottom: '4px' }}>Fund the pool first</div>
               <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '12px', lineHeight: '1.6' }}>
-                Deposit USDC to the pool. 70% goes to the auction slice for startup investments.
+                Deposit USDC. 70% goes to the rounds slice for community-backed deals.
               </div>
               <button onClick={() => setActiveSection('deposit')}
                 style={{ ...btnPrimary, width: 'auto', padding: '8px 20px', fontSize: '12px' }}>
-                Go to Deposit
+                Go to deposit
               </button>
             </div>
           )}
@@ -1175,13 +1157,13 @@ export function AngelPoolDashboard() {
           {auctionSliceVal === 0 && idleSliceVal > 0 && (
             <div style={{ padding: '20px', background: 'linear-gradient(135deg, rgba(251,191,36,0.08), rgba(245,158,11,0.06))', borderRadius: '12px', border: '1px solid rgba(251,191,36,0.2)', textAlign: 'center' }}>
               <div style={{ fontSize: '28px', marginBottom: '10px' }}>⚠️</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC', marginBottom: '4px' }}>Allocate Your Funds</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC', marginBottom: '4px' }}>Allocate your funds</div>
               <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '12px', lineHeight: '1.6' }}>
-                You have ${idleSliceVal.toFixed(2)} idle. Allocate to split 30% APY / 70% Auction before voting.
+                You have ${idleSliceVal.toFixed(2)} idle. Split it 30% yield / 70% rounds before voting.
               </div>
               <button onClick={handleAllocate} disabled={isAllocating}
                 style={{ ...btnPrimary, width: 'auto', padding: '8px 20px', fontSize: '12px', background: 'linear-gradient(135deg, #F59E0B, #D97706)' }}>
-                {isAllocating ? 'Allocating...' : 'Allocate Now'}
+                {isAllocating ? 'Allocating...' : 'Allocate now'}
               </button>
             </div>
           )}
@@ -1204,26 +1186,26 @@ export function AngelPoolDashboard() {
           {auctionSliceVal > 0 && (
             <div style={{ background: '#1e1e2e', borderRadius: '10px', padding: '14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontSize: '12px', color: '#F8FAFC', fontWeight: 600 }}>Propose Investment</span>
+                <span style={{ fontSize: '12px', color: '#F8FAFC', fontWeight: 600 }}>Suggest a round</span>
                 <span style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '12px', background: 'rgba(139,92,246,0.1)', color: '#A78BFA', fontWeight: 600 }}>
                   ${auctionSliceVal.toFixed(2)} available
                 </span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <select value={proposalAuction} onChange={(e) => setProposalAuction(e.target.value)}
-                  style={{ ...inputStyle, cursor: 'pointer' }}>
-                  <option value="">Select auction...</option>
-                  {availableAuctions.map((a: any) => (
-                    <option key={a.address} value={a.address}>
-                      {a.address.slice(0, 8)}...{a.address.slice(-4)}
-                    </option>
-                  ))}
-                </select>
+<select value={proposalAuction} onChange={(e) => setProposalAuction(e.target.value)}
+  style={{ ...inputStyle, cursor: 'pointer' }}>
+  <option value="">Select a round…</option>
+  {availableAuctions.map((a: any) => (
+    <option key={a.address} value={a.address}>
+      {a.name ? `${a.name}${a.roundType ? ' · ' + a.roundType : ''}` : `${a.address.slice(0, 8)}...${a.address.slice(-4)}`}
+    </option>
+  ))}
+</select>
                 <input type="number" value={proposalAmount} onChange={(e) => setProposalAmount(e.target.value)}
                   placeholder="USDC amount" style={inputStyle} />
                 <button onClick={handlePropose} disabled={!proposalAuction || !proposalAmount || loadingVote}
                   style={{ ...btnPrimary, opacity: (!proposalAuction || !proposalAmount || loadingVote) ? 0.5 : 1 }}>
-                  {loadingVote ? 'Proposing...' : 'Propose Investment'}
+                  {loadingVote ? 'Proposing...' : 'Propose'}
                 </button>
               </div>
             </div>
@@ -1232,10 +1214,10 @@ export function AngelPoolDashboard() {
           {poolAuctions.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', color: '#F8FAFC', fontWeight: 600 }}>Active Proposals</span>
+                <span style={{ fontSize: '12px', color: '#F8FAFC', fontWeight: 600 }}>Active proposals</span>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <span style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '12px', background: 'rgba(96,165,250,0.1)', color: '#60A5FA', fontWeight: 600 }}>
-                    {poolAuctions.length} active proposal{poolAuctions.length !== 1 ? 's' : ''}
+                    {poolAuctions.length} active
                   </span>
                   <span style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '12px', background: 'rgba(139,92,246,0.1)', color: '#A78BFA', fontWeight: 600 }}>
                     ${poolAuctions.reduce((sum: number, a: any) => sum + (Number(a?.proposedAmount || 0) / 1e6), 0).toFixed(2)} total
@@ -1263,13 +1245,13 @@ export function AngelPoolDashboard() {
                 let statusBadge = { text: '', color: '', background: '' }
                 if (isExecuted) {
                   statusBadge = {
-                    text: `✓ Executed${hasBid ? ` (Bid #${auction.bidId})` : ''}`,
+                    text: `✓ Placed${hasBid ? ` (Bid #${auction.bidId})` : ''}`,
                     color: '#A78BFA',
                     background: 'rgba(139,92,246,0.15)'
                   }
                 } else if (passed) {
                   statusBadge = {
-                    text: '✓ READY TO EXECUTE',
+                    text: '✓ READY',
                     color: '#4ADE80',
                     background: 'rgba(74,222,128,0.15)'
                   }
@@ -1373,9 +1355,9 @@ export function AngelPoolDashboard() {
                           }}
                         >
                           {executingBid === auction.auctionId ? (
-                            '⏳ Executing...'
+                            '⏳ Placing...'
                           ) : (
-                            `⚡ Execute Bid (${proposedAmountFormatted} USDC)`
+                            `⚡ Place the bid (${proposedAmountFormatted} USDC)`
                           )}
                         </button>
                       </div>
@@ -1390,7 +1372,7 @@ export function AngelPoolDashboard() {
             <div style={{ textAlign: 'center', padding: '24px', color: '#64748B' }}>
               <div style={{ fontSize: '32px', marginBottom: '8px', opacity: 0.4 }}>✓</div>
               <div style={{ fontSize: '13px', color: '#94A3B8' }}>No proposals yet</div>
-              <div style={{ fontSize: '10px', marginTop: '4px' }}>Select an auction above to propose an investment</div>
+              <div style={{ fontSize: '10px', marginTop: '4px' }}>Select a round above to suggest an investment</div>
             </div>
           )}
         </div>
@@ -1399,7 +1381,6 @@ export function AngelPoolDashboard() {
       {/* Oracle & Yield Section */}
       {activeSection === 'oracle' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* APY Disclaimer */}
           <div style={{
             padding: '12px',
             background: 'rgba(96,165,250,0.1)',
@@ -1410,12 +1391,12 @@ export function AngelPoolDashboard() {
             lineHeight: '1.6'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-              <span style={{ color: '#60A5FA', fontWeight: 600, fontSize: '12px' }}>ℹ️ How APY Works</span>
+              <span style={{ color: '#60A5FA', fontWeight: 600, fontSize: '12px' }}>ℹ️ How yield works</span>
             </div>
             <div style={{ marginBottom: '6px' }}>
-              The 30% APY slice provides liquidity to the <strong>Uniswap v4 USDC/MON pool</strong>.
-              Every time someone trades on that pool, your hook captures <strong style={{ color: '#4ADE80' }}>0.05% fees</strong>
-              {' '}— visible as soon as swap sizes are large enough (≥ 0.01 MON).
+              The 30% yield slice provides liquidity to the <strong>Uniswap v4 USDC/MON pool</strong>.
+              Every trade on that pool sends <strong style={{ color: '#4ADE80' }}>0.05% fees</strong>
+              {' '}back to the pool — visible once swap sizes are large enough (≥ 0.01 MON).
             </div>
           </div>
 
@@ -1424,8 +1405,8 @@ export function AngelPoolDashboard() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #4ADE80, #22C55E)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>🔄</div>
               <div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC' }}>Generate APY - Swap MON for USDC</div>
-                <div style={{ fontSize: '11px', color: '#94A3B8' }}>Execute a swap to generate 0.05% fees for the APY slice</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC' }}>Swap MON → USD</div>
+                <div style={{ fontSize: '11px', color: '#94A3B8' }}>Each swap sends 0.05% to the pool</div>
               </div>
             </div>
 
@@ -1442,7 +1423,7 @@ export function AngelPoolDashboard() {
                 style={inputStyle}
               />
               <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
-                Min: 0.0001 MON • Max: 1 MON • Fee: 0.05% (captured by hook)
+                Min 0.0001 MON • Max 1 MON • 0.05% goes to the pool
                 {swapAmount && Number(swapAmount) >= 0.0001 && (
                   <span style={{ display: 'block', marginTop: '2px', color: '#FBBF24' }}>
                     Estimated fee: ~${(Number(swapAmount) * monPrice * 0.0005).toFixed(6)} USDC
@@ -1463,7 +1444,7 @@ export function AngelPoolDashboard() {
                 {swapTxHash && (
                   <div style={{ marginTop: '4px' }}>
                     <a href={`https://testnet.monadscan.com/tx/${swapTxHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60A5FA', textDecoration: 'underline' }}>
-                      View Transaction ↗
+                      View on Explorer ↗
                     </a>
                   </div>
                 )}
@@ -1473,7 +1454,7 @@ export function AngelPoolDashboard() {
             {swapTxHash && !swapError && (
               <div style={{ padding: '8px', background: 'rgba(34,197,94,0.1)', borderRadius: '6px', fontSize: '11px', color: '#4ADE80', marginBottom: '12px' }}>
                 <a href={`https://testnet.monadscan.com/tx/${swapTxHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#4ADE80', textDecoration: 'underline' }}>
-                  View Transaction ↗
+                  View on Explorer ↗
                 </a>
               </div>
             )}
@@ -1488,21 +1469,21 @@ export function AngelPoolDashboard() {
                 color: '#000'
               }}
             >
-              {feesLoading ? 'Swapping...' : 'Swap MON for USDC'}
+              {feesLoading ? 'Swapping...' : 'Swap'}
             </button>
 
             {/* Fee Display */}
             <div style={{ marginTop: '16px', padding: '12px', background: '#12121c', borderRadius: '8px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '11px', color: '#94A3B8' }}>
-                  Total Fees Collected by Hook:
+                  Fees earned
                   <span
                     style={{
                       marginLeft: '4px',
                       cursor: 'help',
                       borderBottom: '1px dotted #64748B'
                     }}
-                    title="Fees are 0.05% of each swap, valued in USDC using the on-chain Pyth MON/USD feed."
+                    title="0.05% of each swap, valued in USDC using the on-chain Pyth MON/USD feed."
                   >
                     ⓘ
                   </span>
@@ -1512,23 +1493,23 @@ export function AngelPoolDashboard() {
                 </span>
               </div>
               <div style={{ fontSize: '9px', color: '#64748B', marginTop: '4px' }}>
-                Fees accumulate in APY slice with each swap
+                Fees accumulate in the yield slice with each swap
                 {totalSwapFees && parseFloat(totalSwapFees) === 0 && (
                   <span style={{ display: 'block', marginTop: '4px', color: '#FBBF24' }}>
-                    ⚡ Try a larger swap to see fees - minimum fee is ~0.000001 USDC
+                    ⚡ Try a larger swap — minimum fee is ~0.000001 USDC
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Pyth Oracle Section — mixed sources */}
+          {/* Pyth Oracle Section */}
           <div style={{ background: '#1e1e2e', borderRadius: '10px', padding: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>⚡</div>
                 <div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Pyth Oracle</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Price feed</div>
                   <div style={{ fontSize: '9px', color: '#64748B' }}>MON on-chain • USDC via Pyth Pro</div>
                 </div>
               </div>
@@ -1565,7 +1546,7 @@ export function AngelPoolDashboard() {
               </div>
             ) : (
               <div style={{ textAlign: 'center', padding: '16px', color: '#64748B', fontSize: '11px' }}>
-                {pythLoading ? 'Fetching prices...' : 'Click Refresh to load oracle prices'}
+                {pythLoading ? 'Fetching prices...' : 'Tap refresh to load prices'}
               </div>
             )}
 
@@ -1582,21 +1563,21 @@ export function AngelPoolDashboard() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #60A5FA, #3B82F6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>📈</div>
               <div>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Yield Strategy</div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Where the yield comes from</div>
                 <div style={{ fontSize: '9px', color: '#64748B' }}>Uniswap v4 swap fees</div>
               </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
               <div style={{ padding: '12px', background: 'linear-gradient(135deg, rgba(96,165,250,0.08), rgba(59,130,246,0.06))', borderRadius: '10px', border: '1px solid rgba(96,165,250,0.15)' }}>
-                <div style={{ fontSize: '9px', color: '#64748B' }}>APY Slice (30%)</div>
+                <div style={{ fontSize: '9px', color: '#64748B' }}>Yield slice (30%)</div>
                 <div style={{ fontSize: '18px', fontWeight: 700, color: '#60A5FA' }}>
                   ${hookPoolInfo ? parseFloat(hookPoolInfo.apySlice).toFixed(2) : '0.00'}
                 </div>
               </div>
               <div style={{ padding: '12px', background: 'linear-gradient(135deg, rgba(74,222,128,0.08), rgba(34,197,94,0.06))', borderRadius: '10px', border: '1px solid rgba(74,222,128,0.15)' }}>
                 <div style={{ fontSize: '9px', color: '#64748B' }}>
-                  Swap Fees Collected
+                  Fees earned
                   <span
                     style={{
                       marginLeft: '4px',
@@ -1622,14 +1603,14 @@ export function AngelPoolDashboard() {
               marginBottom: '12px'
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <span style={{ fontSize: '11px', color: '#4ADE80', fontWeight: 600 }}>Live APY Updates</span>
-                <span style={{ fontSize: '9px', color: '#64748B' }}>Auto-refreshes every 5s</span>
+                <span style={{ fontSize: '11px', color: '#4ADE80', fontWeight: 600 }}>Live updates</span>
+                <span style={{ fontSize: '9px', color: '#64748B' }}>Refreshes every 5s</span>
               </div>
               <div style={{ fontSize: '10px', color: '#94A3B8' }}>
-                Every swap through the Uniswap v4 pool adds 0.05% fees here.
+                Every swap through the Uniswap v4 pool adds 0.05% here.
                 {totalSwapFees && parseFloat(totalSwapFees) > 0 ? (
                   <span style={{ color: '#4ADE80', display: 'block', marginTop: '4px' }}>
-                    ✅ {formatFeeDisplay(totalSwapFees)} earned so far!
+                    ✅ {formatFeeDisplay(totalSwapFees)} earned so far
                   </span>
                 ) : (
                   <span style={{ display: 'block', marginTop: '4px' }}>
@@ -1643,12 +1624,12 @@ export function AngelPoolDashboard() {
               <div style={{ padding: '12px', background: 'linear-gradient(135deg, rgba(74,222,128,0.06), rgba(34,197,94,0.04))', borderRadius: '10px', border: '1px solid rgba(74,222,128,0.2)', marginBottom: '8px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <div>
-                    <div style={{ fontSize: '9px', color: '#64748B' }}>Your APY Earnings</div>
+                    <div style={{ fontSize: '9px', color: '#64748B' }}>Your earnings</div>
                     <div style={{ fontSize: '18px', fontWeight: 700, color: '#4ADE80' }}>
                       ${investorAPYValue.toFixed(6)}
                     </div>
                     <div style={{ fontSize: '9px', color: '#64748B' }}>
-                      {investorInfo.sharePercentage} of ${hookPoolInfo ? parseFloat(hookPoolInfo.apySlice).toFixed(2) : '0'} APY pool
+                      {investorInfo.sharePercentage} of ${hookPoolInfo ? parseFloat(hookPoolInfo.apySlice).toFixed(2) : '0'} yield pool
                     </div>
                   </div>
                   <button onClick={handleClaimAPY} disabled={claimingAPY || loading || investorAPYValue <= 0}
@@ -1657,17 +1638,17 @@ export function AngelPoolDashboard() {
                       border: 'none', borderRadius: '8px', color: '#000', fontSize: '11px', fontWeight: 700,
                       cursor: 'pointer', opacity: claimingAPY || loading ? 0.5 : 1
                     }}>
-                    {claimingAPY ? 'Claiming...' : 'Withdraw APY'}
+                    {claimingAPY ? 'Claiming...' : 'Claim earnings'}
                   </button>
                 </div>
                 <div style={{ fontSize: '9px', color: '#94A3B8', lineHeight: 1.5 }}>
-                  Withdraws your proportional share of the APY slice as USDC. Earnings grow as swap fees accrue from Uniswap v4 trading activity.
+                  Withdraws your share of the yield slice as USDC. Earnings grow as swap fees accrue.
                 </div>
               </div>
             )}
 
             <div style={{ padding: '12px', background: '#12121c', borderRadius: '8px', border: '1px solid #2d2d44' }}>
-              <div style={{ fontSize: '11px', color: '#F8FAFC', fontWeight: 600, marginBottom: '8px' }}>How It Works</div>
+              <div style={{ fontSize: '11px', color: '#F8FAFC', fontWeight: 600, marginBottom: '8px' }}>How the pool works</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(96,165,250,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#60A5FA', fontWeight: 700, flexShrink: 0 }}>1</div>
@@ -1675,15 +1656,15 @@ export function AngelPoolDashboard() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(139,92,246,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#A78BFA', fontWeight: 700, flexShrink: 0 }}>2</div>
-                  <span style={{ fontSize: '10px', color: '#94A3B8' }}>afterSwap hook captures 0.05% fees automatically</span>
+                  <span style={{ fontSize: '10px', color: '#94A3B8' }}>Every swap sends 0.05% back to the pool</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(74,222,128,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#4ADE80', fontWeight: 700, flexShrink: 0 }}>3</div>
-                  <span style={{ fontSize: '10px', color: '#94A3B8' }}>Fees accrue to APY slice, growing investor shares</span>
+                  <span style={{ fontSize: '10px', color: '#94A3B8' }}>Fees accrue to the yield slice, growing member shares</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(251,191,36,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#FBBF24', fontWeight: 700, flexShrink: 0 }}>4</div>
-                  <span style={{ fontSize: '10px', color: '#94A3B8' }}>Withdraw APY to claim your proportional earnings</span>
+                  <span style={{ fontSize: '10px', color: '#94A3B8' }}>Claim earnings to withdraw your share</span>
                 </div>
               </div>
             </div>
@@ -1695,7 +1676,7 @@ export function AngelPoolDashboard() {
       {!isPoolInitialized && (
         <div style={{ padding: '20px', background: 'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(99,102,241,0.06))', borderRadius: '12px', border: '1px solid rgba(139,92,246,0.15)', textAlign: 'center' }}>
           <div style={{ fontSize: '28px', marginBottom: '8px' }}>🏊</div>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC', marginBottom: '4px' }}>Pool Not Initialized</div>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#F8FAFC', marginBottom: '4px' }}>Pool not initialized</div>
           <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '12px' }}>Create the Angel Pool to start investing</div>
           <button onClick={createAngelPool} disabled={loading}
             style={{ ...btnPrimary, width: 'auto', padding: '10px 24px', fontSize: '13px' }}>

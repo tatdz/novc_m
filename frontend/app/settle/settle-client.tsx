@@ -1,7 +1,7 @@
-//app/settle/settle-client.tsx
+// app/settle/settle-client.tsx
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useAccount, usePublicClient, useWalletClient, useBlockNumber, useSwitchChain, useChainId } from 'wagmi'
 import { type Address, formatUnits, encodeFunctionData, pad, createPublicClient, createWalletClient, custom, http, decodeAbiParameters } from 'viem'
 import { monadTestnet } from 'viem/chains'
@@ -12,20 +12,21 @@ import { CONTRACTS, CCTP_DOMAINS, DEPLOYED_ADDRESSES } from '@/lib/contracts'
 
 const PRIORITY_FEE = 100000000n
 
+const Q96 = 2n ** 96n
+
 const KNOWN_ERRORS: Record<string, string> = {
-  '0x00175ba8': 'AuctionIsNotOver - The auction end block has not been reached yet on-chain. Wait for more blocks.',
-  '0x76ae8ed7': 'CannotSweepCurrency - Currency has already been swept.',
-  '0x8fd6c3f9': 'CannotSweepTokens - Tokens have already been swept.',
-  '0xd66173a5': 'NotGraduated - Auction did not reach minimum raise. All bids must be refunded via Exit instead.',
-  '0x6247a84e': 'NotClaimable - Claim block has not been reached yet.',
-  '0x5f0ae8b5': 'AuctionIsOver - Auction has already ended.',
-  '0x34588221': 'BidAlreadyExited - This bid has already been exited.',
-  '0x0ba98457': 'CannotExitBid - This bid cannot be exited.',
-  '0x9076e8b9': 'Bid not found - The bid ID does not exist. Check your bid IDs in the list above.',
-  '0xeffaea80': 'AuctionNotStarted - The auction has not started yet.',
-  '0x5cd54361': 'AuctionSoldOut - The auction is fully sold out.',
-  // ✅ New: CCA requires exitBid before claimTokens
-  '0x7e138882': 'BidNotExited - This bid must be exited before you can claim its tokens.',
+  '0x00175ba8': "The round hasn't closed yet. Wait for more blocks.",
+  '0x76ae8ed7': 'Funds already collected.',
+  '0x8fd6c3f9': 'Shares already recovered.',
+  '0xd66173a5': "This round didn't reach its minimum. Exit to get your money back.",
+  '0x6247a84e': "Shares aren't available to claim yet. Check back soon.",
+  '0x5f0ae8b5': 'The round has already ended.',
+  '0x34588221': "You've already exited this bid.",
+  '0x0ba98457': "This bid can't be exited.",
+  '0x9076e8b9': 'Bid not found. Check your bid IDs in the list above.',
+  '0xeffaea80': "The round hasn't started yet.",
+  '0x5cd54361': 'The round is fully sold out.',
+  '0x7e138882': 'Exit this bid first, then claim your shares.',
 }
 
 function decodeRevertReason(err: any): string {
@@ -43,6 +44,27 @@ function decodeRevertReason(err: any): string {
   if (err?.shortMessage) return err.shortMessage
   const msg = err?.message || ''
   return msg.slice(0, 200) || 'Transaction failed'
+}
+
+// Format a USDC amount with 2 decimals and locale grouping.
+// Handles very small values by showing 4 decimals instead of rounding to 0.00.
+function formatUsdc(value: string | number): string {
+  const n = typeof value === 'string' ? parseFloat(value) : value
+  if (!Number.isFinite(n)) return '0.00'
+  if (n === 0) return '0.00'
+  if (Math.abs(n) < 0.01) return n.toFixed(4)
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+// CCA prices are Q96-encoded. Divide by 2^96 to get USDC-per-share with 6
+// decimals, then format for display. Returns '—' if the value is 0 (not yet set).
+function formatClearingPrice(q96Raw: bigint): string {
+  if (q96Raw === 0n) return ''
+  const priceInMicroUsdc = q96Raw / Q96
+  const priceInUsdc = Number(priceInMicroUsdc) / 1e6
+  if (!Number.isFinite(priceInUsdc) || priceInUsdc === 0) return ''
+  if (priceInUsdc < 0.01) return priceInUsdc.toFixed(4)
+  return priceInUsdc.toFixed(2)
 }
 
 interface AuctionInfo {
@@ -84,14 +106,24 @@ export default function SettleClient() {
   const [currentBlock, setCurrentBlock] = useState<bigint>(0n)
   const [isInitialized, setIsInitialized] = useState<boolean | null>(null)
   const [isGraduated, setIsGraduated] = useState<boolean>(false)
-  // ✅ FIX: track successfully-claimed bid IDs so the button disables after success.
-  // Persisted to localStorage per auction address so the state survives reloads.
   const [claimedBids, setClaimedBids] = useState<Set<string>>(new Set())
 
   const lastFetchedAddr = useRef('')
   const lastFetchedBlock = useRef(0n)
 
-  // ✅ FIX: load / persist claimed bids keyed by auction address.
+  const roundsMeta = useMemo(() => {
+    const map: Record<string, { name: string; roundType?: string }> = {}
+    for (const a of getAllAuctions()) {
+      if (!a.name) continue
+      map[a.address.toLowerCase()] = { name: a.name, roundType: a.roundType }
+    }
+    return map
+  }, [getAllAuctions])
+
+  const namedRounds = useMemo(() => {
+    return getAllAuctions().filter(a => a.name && a.name.trim().length > 0)
+  }, [getAllAuctions])
+
   useEffect(() => {
     if (!auctionAddress) {
       setClaimedBids(new Set())
@@ -167,16 +199,31 @@ export default function SettleClient() {
     lastFetchedAddr.current = auctionAddress
     lastFetchedBlock.current = currentBlock
     try {
-      const [clearingPrice, startBlock, endBlock, claimBlock, creator, currencyRaised, graduated, tokenAddr] = await Promise.all([
+      // currencyRaised has its own try/catch so a real RPC failure is logged
+      // and we can tell the difference between "genuinely 0" and "call failed".
+      let currencyRaisedRaw: bigint = 0n
+      try {
+        currencyRaisedRaw = await publicClient.readContract({
+          address: auctionAddress as Address,
+          abi: CCA_ABI,
+          functionName: 'currencyRaised',
+        }) as bigint
+      } catch (crErr: any) {
+        console.warn('[Settle] currencyRaised read failed:', crErr?.shortMessage || crErr?.message)
+        currencyRaisedRaw = 0n
+      }
+
+      const [clearingPriceRaw, startBlock, endBlock, claimBlock, creator, graduated, tokenAddr] = await Promise.all([
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'clearingPrice' }).catch(() => 0n),
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'startBlock' }).catch(() => 0n),
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'endBlock' }).catch(() => 0n),
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'claimBlock' }).catch(() => 0n),
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'fundsRecipient' }).catch(() => '0x0'),
-        publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'currencyRaised' }).catch(() => 0n),
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'isGraduated' }).catch(() => false),
         publicClient.readContract({ address: auctionAddress as Address, abi: CCA_ABI, functionName: 'token' }).catch(() => '0x0'),
       ])
+
+      const currencyRaised = currencyRaisedRaw
       let graduatedResult = graduated as boolean
 
       const endBnCheck = BigInt(endBlock?.toString() || '0')
@@ -228,9 +275,37 @@ export default function SettleClient() {
       const isActive = startBn > 0n && currentBlock >= startBn && currentBlock <= endBn
       const isClaimable = claimBn > 0n ? currentBlock >= claimBn : isEnded
 
+      // Fallback: if the contract reports 0 raised but the user has bids stored
+      // for this round, show the sum of the user's own bids so the panel is not
+      // misleadingly empty during the round. This is a display-only value.
+      let currencyRaisedFinal = BigInt(currencyRaised?.toString() || '0')
+      if (currencyRaisedFinal === 0n) {
+        try {
+          const localBids = getBidsForAuction(auctionAddress as Address)
+          let sum = 0n
+          for (const b of localBids) {
+            // b.amount is shares (6 decimals), b.price is Q96-encoded max price.
+            // Total committed = amount * (price / 2^96) / 1e6, both in USDC units.
+            const priceInMicroUSDC = b.price / Q96
+            const totalMicroUSDC = (BigInt(b.amount) * priceInMicroUSDC) / 1_000_000n
+            sum += totalMicroUSDC
+          }
+          if (sum > 0n) {
+            currencyRaisedFinal = sum
+            console.log('[Settle] contract currencyRaised=0, using local bid sum as fallback:', formatUnits(sum, 6))
+          }
+        } catch (fbErr) {
+          console.warn('[Settle] fallback sum failed:', fbErr)
+        }
+      }
+
+      // Clearing price is Q96-encoded. Divide by 2^96 to get USDC per share.
+      // Store the formatted string so the UI never sees the raw value.
+      const clearingPriceNum = formatClearingPrice(BigInt(clearingPriceRaw?.toString() || '0'))
+
       setAuctionInfo({
         address: auctionAddress,
-        clearingPrice: formatUnits(BigInt(clearingPrice?.toString() || '0'), 6),
+        clearingPrice: clearingPriceNum,
         startBlock: startBn.toString(),
         endBlock: endBn.toString(),
         claimBlock: claimBn.toString(),
@@ -238,7 +313,7 @@ export default function SettleClient() {
         isActive,
         isClaimable,
         creator: (creator as string) || '0x0',
-        currencyRaised: formatUnits(BigInt(currencyRaised?.toString() || '0'), 6),
+        currencyRaised: formatUnits(currencyRaisedFinal, 6),
       })
     } catch (err) {
       console.error('Failed to fetch auction info:', err)
@@ -246,7 +321,7 @@ export default function SettleClient() {
     } finally {
       setLoadingInfo(false)
     }
-  }, [publicClient, auctionAddress, currentBlock])
+  }, [publicClient, auctionAddress, currentBlock, getBidsForAuction])
 
   const fetchUserBids = useCallback(async () => {
     if (!publicClient || !auctionAddress || !address || !/^0x[a-fA-F0-9]{40}$/.test(auctionAddress)) {
@@ -370,9 +445,9 @@ export default function SettleClient() {
         chain: monadTestnet,
       })
       const initReceipt = await publicClient.waitForTransactionReceipt({ hash: tx })
-      if (initReceipt.status !== 'success') { showStatus('error', 'onTokensReceived reverted on-chain'); return }
+      if (initReceipt.status !== 'success') { showStatus('error', 'Initialization reverted on-chain'); return }
       setIsInitialized(true)
-      showStatus('success', `Auction initialized! Bids and settlement now enabled. View: ${getExplorerUrl(tx)}`)
+      showStatus('success', `Initialized! Bids and settlement are now live. View: ${getExplorerUrl(tx)}`)
       lastFetchedAddr.current = ''
       fetchAuctionInfo()
     } catch (err: any) {
@@ -380,14 +455,10 @@ export default function SettleClient() {
     } finally { setActing(false) }
   }
 
-  // ✅ FIX: auto-exit the bid before claiming, and mark it claimed afterward.
-  // The CCA requires exitBid(bidId) before claimTokens(bidId).
-  // Repeated claims are no-ops at the contract level but cost gas, so we
-  // disable the button via claimedBids state to prevent that.
   const handleClaimTokens = async () => {
     if (!walletClient || !publicClient || !bidIdInput) return
     if (claimedBids.has(bidIdInput)) {
-      showStatus('error', `Bid #${bidIdInput} has already been claimed in this session.`)
+      showStatus('error', `Bid #${bidIdInput} has already been claimed.`)
       return
     }
     try {
@@ -396,7 +467,6 @@ export default function SettleClient() {
 
       const bidId = BigInt(bidIdInput)
 
-      // ---- Step 1: Ensure the bid is exited ----
       try {
         await publicClient.simulateContract({
           address: auctionAddress as Address,
@@ -418,10 +488,10 @@ export default function SettleClient() {
         })
         const exitReceipt = await publicClient.waitForTransactionReceipt({ hash: exitTx })
         if (exitReceipt.status !== 'success') {
-          showStatus('error', 'exitBid reverted on-chain')
+          showStatus('error', 'Exit reverted on-chain')
           return
         }
-        showStatus('success', 'Bid exited (refund sent). Now claiming tokens...')
+        showStatus('success', 'Bid exited (refund sent). Now collecting shares...')
         await new Promise(r => setTimeout(r, 3000))
       } catch (exitSimErr: any) {
         const exitReason = decodeRevertReason(exitSimErr)
@@ -432,13 +502,12 @@ export default function SettleClient() {
           (exitSimErr?.message || '').includes('0x34588221')
         if (!isAlreadyExited) {
           console.error('[Settle] exitBid simulation failed:', exitSimErr)
-          showStatus('error', `exitBid failed: ${exitReason}`)
+          showStatus('error', `Exit failed: ${exitReason}`)
           return
         }
         console.log('[Settle] Bid already exited, proceeding to claimTokens')
       }
 
-      // ---- Step 2: Read user's token balance before claim ----
       let tokenAddr: Address | null = null
       let balanceBefore = 0n
       try {
@@ -459,7 +528,6 @@ export default function SettleClient() {
         console.warn('[Settle] Could not read balance before claim:', balErr)
       }
 
-      // ---- Step 3: Simulate claimTokens ----
       try {
         await publicClient.simulateContract({
           address: auctionAddress as Address,
@@ -475,7 +543,6 @@ export default function SettleClient() {
         return
       }
 
-      // ---- Step 4: Execute claimTokens ----
       const gas = await getGas()
       const tx = await walletClient.writeContract({
         address: auctionAddress as Address,
@@ -488,11 +555,10 @@ export default function SettleClient() {
       })
       const claimReceipt = await publicClient.waitForTransactionReceipt({ hash: tx })
       if (claimReceipt.status !== 'success') {
-        showStatus('error', 'Claim tokens transaction reverted on-chain')
+        showStatus('error', 'Collection reverted on-chain')
         return
       }
 
-      // ---- Step 5: Verify tokens actually arrived ----
       let received = 0n
       if (tokenAddr && tokenAddr !== '0x0') {
         try {
@@ -508,14 +574,12 @@ export default function SettleClient() {
         }
       }
 
-      // Mark claimed regardless — the CCA treats the bid as claimed even if no
-      // tokens moved (e.g. this bid was already claimed in a prior session).
       markClaimed(bidIdInput)
 
       if (received > 0n) {
-        showStatus('success', `Received ${formatUnits(received, 18)} tokens for bid #${bidIdInput}! View: ${getExplorerUrl(tx)}`)
+        showStatus('success', `Received ${formatUnits(received, 18)} shares for bid #${bidIdInput}! View: ${getExplorerUrl(tx)}`)
       } else {
-        showStatus('success', `Claim tx succeeded for bid #${bidIdInput}, but no new tokens were transferred (already claimed). View: ${getExplorerUrl(tx)}`)
+        showStatus('success', `Collect tx succeeded for bid #${bidIdInput}, but no new shares moved (already collected). View: ${getExplorerUrl(tx)}`)
       }
       fetchAuctionInfo()
     } catch (err: any) {
@@ -557,8 +621,8 @@ export default function SettleClient() {
         chain: monadTestnet,
       })
       const exitReceipt = await publicClient.waitForTransactionReceipt({ hash: tx })
-      if (exitReceipt.status !== 'success') { showStatus('error', 'Exit bid transaction reverted on-chain'); return }
-      showStatus('success', `Bid #${bidIdInput} exited - USDC refunded! View: ${getExplorerUrl(tx)}`)
+      if (exitReceipt.status !== 'success') { showStatus('error', 'Exit reverted on-chain'); return }
+      showStatus('success', `Bid #${bidIdInput} exited — refund sent. View: ${getExplorerUrl(tx)}`)
       fetchAuctionInfo()
     } catch (err: any) {
       showStatus('error', decodeRevertReason(err))
@@ -606,15 +670,15 @@ export default function SettleClient() {
         chain: monadTestnet,
       })
       const sweepReceipt = await publicClient.waitForTransactionReceipt({ hash: tx })
-      if (sweepReceipt.status !== 'success') { showStatus('error', 'Sweep currency transaction reverted on-chain'); return }
+      if (sweepReceipt.status !== 'success') { showStatus('error', 'Collection reverted on-chain'); return }
 
       if (!bridgeToArc) {
-        showStatus('success', `Raised USDC swept to your wallet! View: ${getExplorerUrl(tx)}`)
+        showStatus('success', `Funds collected! View: ${getExplorerUrl(tx)}`)
         fetchAuctionInfo()
         return
       }
 
-      showStatus('success', 'USDC swept! Now bridging to Arc Testnet via CCTP...')
+      showStatus('success', 'Funds collected! Now bridging via CCTP...')
 
       await new Promise(r => setTimeout(r, 5000))
 
@@ -623,7 +687,7 @@ export default function SettleClient() {
       }) as bigint
       const sweptAmount = balanceAfter - balanceBefore
       if (sweptAmount <= 0n) {
-        showStatus('error', 'No USDC was swept (balance unchanged). Bridge cancelled.')
+        showStatus('error', 'No funds moved (balance unchanged). Bridge cancelled.')
         return
       }
 
@@ -673,7 +737,7 @@ export default function SettleClient() {
         })
         const bridgeReceipt = await publicClient.waitForTransactionReceipt({ hash: bridgeHash, confirmations: 1 })
         if (bridgeReceipt.status !== 'success') {
-          showStatus('error', 'USDC swept to wallet but CCTP bridge reverted. Funds are safe in your wallet.')
+          showStatus('error', 'Funds collected but CCTP bridge reverted. Funds are safe in your wallet.')
           return
         }
 
@@ -772,16 +836,16 @@ export default function SettleClient() {
         }) as `0x${string}`
 
         const destClient = createPublicClient({ chain: arcTestnet, transport: http() })
-        showStatus('success', 'Waiting for confirmation...')
+        showStatus('success', 'Confirming...')
         const receiveReceipt = await destClient.waitForTransactionReceipt({ hash: receiveHash })
         if (receiveReceipt.status !== 'success') {
           showStatus('error', 'receiveMessage reverted on Arc Testnet. Funds can be claimed manually.')
           return
         }
 
-        showStatus('success', `${formatUnits(sweptAmount, 6)} USDC swept & bridged to Arc Testnet! View: ${getExplorerUrl(bridgeHash)}`)
+        showStatus('success', `${formatUnits(sweptAmount, 6)} USDC collected & bridged to Arc Testnet! View: ${getExplorerUrl(bridgeHash)}`)
       } catch (bridgeErr: any) {
-        showStatus('error', `USDC swept to wallet successfully but bridge failed: ${bridgeErr?.shortMessage || bridgeErr?.message || 'unknown error'}. Funds are safe in your wallet.`)
+        showStatus('error', `Funds collected successfully but bridge failed: ${bridgeErr?.shortMessage || bridgeErr?.message || 'unknown error'}. Funds are safe in your wallet.`)
         return
       }
       fetchAuctionInfo()
@@ -825,8 +889,8 @@ export default function SettleClient() {
         chain: monadTestnet,
       })
       const sweepUnsoldReceipt = await publicClient.waitForTransactionReceipt({ hash: tx })
-      if (sweepUnsoldReceipt.status !== 'success') { showStatus('error', 'Sweep unsold tokens transaction reverted on-chain'); return }
-      showStatus('success', `Unsold tokens swept back to your wallet! View: ${getExplorerUrl(tx)}`)
+      if (sweepUnsoldReceipt.status !== 'success') { showStatus('error', 'Recovery reverted on-chain'); return }
+      showStatus('success', `Unsold shares recovered! View: ${getExplorerUrl(tx)}`)
       fetchAuctionInfo()
     } catch (err: any) {
       showStatus('error', decodeRevertReason(err))
@@ -834,7 +898,7 @@ export default function SettleClient() {
   }
 
   const isFounder = auctionInfo && address && auctionInfo.creator.toLowerCase() === address.toLowerCase()
-  const storedAuctions = getAllAuctions()
+  const storedAuctions = namedRounds
   const panelStyle = { background: '#12121c', borderRadius: '12px', border: '1px solid #1e1e2e', padding: '20px' }
 
   const blocksUntilEnd = auctionInfo && !auctionInfo.isEnded && currentBlock > 0n
@@ -847,25 +911,25 @@ export default function SettleClient() {
   const selectedBidAlreadyClaimed = bidIdInput ? claimedBids.has(bidIdInput) : false
 
   return (
-    <div style={{ maxWidth: '720px', margin: '0 auto', padding: '20px' }}>
+    <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '20px' }}>
       <div style={{ textAlign: 'center', marginBottom: '24px' }}>
         <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#F8FAFC', margin: '0 0 6px' }}>
-          Auction Settlement
+          Collect & Settle
         </h2>
         <p style={{ fontSize: '12px', color: '#94A3B8', margin: 0 }}>
-          Claim tokens, exit bids, or sweep raised funds after an auction ends
+          Collect your shares, get refunds, or withdraw raised funds once a round closes
         </p>
       </div>
 
       {!isConnected ? (
         <div style={{ ...panelStyle, textAlign: 'center', padding: '48px 20px' }}>
           <div style={{ fontSize: '32px', marginBottom: '12px' }}>&#128274;</div>
-          <p style={{ fontSize: '14px', color: '#94A3B8', margin: 0 }}>Connect your wallet to settle auctions</p>
+          <p style={{ fontSize: '14px', color: '#94A3B8', margin: 0 }}>Connect to collect</p>
         </div>
       ) : (
         <>
           <div style={{ ...panelStyle, marginBottom: '16px' }}>
-            <label style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 500, display: 'block', marginBottom: '6px' }}>Auction Contract Address</label>
+            <label style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 500, display: 'block', marginBottom: '6px' }}>Round address</label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 type="text"
@@ -882,18 +946,31 @@ export default function SettleClient() {
 
             {storedAuctions.length > 0 && (
               <div style={{ marginTop: '8px' }}>
-                <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Your auctions:</div>
+                <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Your rounds:</div>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {storedAuctions.map((a, i) => (
-                    <button key={i} onClick={() => setAuctionAddress(a.address)}
-                      style={{
-                        padding: '4px 8px', background: auctionAddress === a.address ? 'rgba(139,92,246,0.2)' : '#1e1e2e',
-                        border: auctionAddress === a.address ? '1px solid rgba(139,92,246,0.4)' : '1px solid #2d2d44',
-                        borderRadius: '4px', color: '#F8FAFC', fontSize: '10px', fontFamily: 'monospace', cursor: 'pointer'
-                      }}>
-                      {a.address.slice(0, 6)}...{a.address.slice(-4)}
-                    </button>
-                  ))}
+                  {storedAuctions.map((a, i) => {
+                    const meta = roundsMeta[a.address.toLowerCase()]
+                    const label = meta?.name
+                      ? `${meta.name}${meta.roundType ? ` · ${meta.roundType}` : ''}`
+                      : `${a.address.slice(0, 6)}...${a.address.slice(-4)}`
+                    const isSelected = auctionAddress === a.address
+                    return (
+                      <button key={i} onClick={() => setAuctionAddress(a.address)}
+                        style={{
+                          padding: '4px 10px',
+                          background: isSelected ? 'rgba(139,92,246,0.2)' : '#1e1e2e',
+                          border: isSelected ? '1px solid rgba(139,92,246,0.4)' : '1px solid #2d2d44',
+                          borderRadius: '6px',
+                          color: '#F8FAFC',
+                          fontSize: '10px',
+                          fontWeight: meta?.name ? 600 : 400,
+                          fontFamily: meta?.name ? 'inherit' : 'monospace',
+                          cursor: 'pointer',
+                        }}>
+                        {label}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -907,7 +984,7 @@ export default function SettleClient() {
                   background: auctionInfo.isClaimable ? '#4ADE80' : auctionInfo.isEnded ? '#FBBF24' : auctionInfo.isActive ? '#22C55E' : '#94A3B8'
                 }} />
                 <span style={{ fontSize: '12px', fontWeight: 600, color: '#F8FAFC' }}>
-                  {auctionInfo.isClaimable ? 'Ready to Settle' : auctionInfo.isEnded ? 'Ended - Waiting for Claim Block' : auctionInfo.isActive ? 'Auction Live' : 'Auction Pending'}
+                  {auctionInfo.isClaimable ? 'Ready to collect' : auctionInfo.isEnded ? 'Ended — waiting for claim block' : auctionInfo.isActive ? 'Round live' : 'Round pending'}
                 </span>
                 {isFounder && (
                   <span style={{ fontSize: '9px', padding: '2px 6px', background: 'rgba(139,92,246,0.2)', color: '#A78BFA', borderRadius: '4px', fontWeight: 600 }}>
@@ -915,17 +992,25 @@ export default function SettleClient() {
                   </span>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
                 <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '10px' }}>
-                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>Clearing Price</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#F8FAFC' }}>{Number(auctionInfo.clearingPrice) > 0 ? `${auctionInfo.clearingPrice} USDC` : 'TBD'}</div>
+                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>Final price</div>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#F8FAFC' }}>
+                    {auctionInfo.clearingPrice ? `$${auctionInfo.clearingPrice}` : 'TBD'}
+                  </div>
                 </div>
                 <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '10px' }}>
-                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>Currency Raised</div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#F8FAFC' }}>{Number(auctionInfo.currencyRaised) > 0 ? `${auctionInfo.currencyRaised} USDC` : '0'}</div>
+                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>Raised</div>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#F8FAFC' }}>
+                    {Number(auctionInfo.currencyRaised) > 0
+                      ? `$${formatUsdc(auctionInfo.currencyRaised)}`
+                      : auctionInfo.isEnded
+                        ? '$0.00'
+                        : 'In progress'}
+                  </div>
                 </div>
                 <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '10px' }}>
-                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>End Block</div>
+                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>End block</div>
                   <div style={{ fontSize: '13px', fontWeight: 700, color: '#F8FAFC' }}>
                     {auctionInfo.endBlock}
                     {blocksUntilEnd !== null && blocksUntilEnd > 0n && (
@@ -934,9 +1019,9 @@ export default function SettleClient() {
                   </div>
                 </div>
                 <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '10px' }}>
-                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>Claim Block</div>
+                  <div style={{ fontSize: '9px', color: '#64748B', marginBottom: '2px' }}>Claim block</div>
                   <div style={{ fontSize: '13px', fontWeight: 700, color: auctionInfo.isClaimable ? '#4ADE80' : '#FBBF24' }}>
-                    {auctionInfo.claimBlock !== '0' ? auctionInfo.claimBlock : 'Same as End'}
+                    {auctionInfo.claimBlock !== '0' ? auctionInfo.claimBlock : 'Same as end'}
                     {blocksUntilClaim !== null && blocksUntilClaim > 0n && (
                       <span style={{ fontSize: '10px', marginLeft: '6px' }}>({blocksUntilClaim.toString()} left)</span>
                     )}
@@ -978,8 +1063,8 @@ export default function SettleClient() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                 <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', flexShrink: 0 }}>&#9888;</div>
                 <div>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#F87171' }}>Auction Not Initialized</div>
-                  <div style={{ fontSize: '11px', color: '#94A3B8' }}>Tokens are in the contract but onTokensReceived() was not called. Bids and settlement will fail until initialized.</div>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#F87171' }}>Not initialized</div>
+                  <div style={{ fontSize: '11px', color: '#94A3B8' }}>Shares are in the contract but onTokensReceived() has not been called. Bids and settlement will fail until it is.</div>
                 </div>
               </div>
               <button onClick={handleInitialize} disabled={acting}
@@ -987,7 +1072,7 @@ export default function SettleClient() {
                   width: '100%', padding: '14px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: '10px',
                   color: '#fff', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: acting ? 0.5 : 1
                 }}>
-                {acting ? 'Initializing...' : 'Initialize Auction (Fix TokensNotReceived)'}
+                {acting ? 'Initializing...' : 'Initialize round'}
               </button>
             </div>
           )}
@@ -995,11 +1080,11 @@ export default function SettleClient() {
           {auctionInfo && !auctionInfo.isEnded && (
             <div style={{ ...panelStyle, border: '1px solid rgba(251,191,36,0.2)', textAlign: 'center' }}>
               <div style={{ fontSize: '24px', marginBottom: '8px' }}>&#9203;</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#FBBF24', marginBottom: '4px' }}>Auction Still Running</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#FBBF24', marginBottom: '4px' }}>Round still live</div>
               <div style={{ fontSize: '12px', color: '#94A3B8' }}>
-                Settlement will be available after block {auctionInfo.endBlock}
+                Settlement opens after block {auctionInfo.endBlock}
                 {blocksUntilEnd !== null && blocksUntilEnd > 0n && (
-                  <span> (~{blocksUntilEnd.toString()} blocks / {Math.ceil(Number(blocksUntilEnd) * 2)}s remaining)</span>
+                  <span> (~{blocksUntilEnd.toString()} blocks / {Math.ceil(Number(blocksUntilEnd) * 2)}s left)</span>
                 )}
               </div>
             </div>
@@ -1008,11 +1093,11 @@ export default function SettleClient() {
           {auctionInfo?.isEnded && !auctionInfo.isClaimable && (
             <div style={{ ...panelStyle, border: '1px solid rgba(251,191,36,0.2)', textAlign: 'center', marginBottom: '16px' }}>
               <div style={{ fontSize: '24px', marginBottom: '8px' }}>&#9203;</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#FBBF24', marginBottom: '4px' }}>Waiting for Claim Block</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#FBBF24', marginBottom: '4px' }}>Waiting for claim block</div>
               <div style={{ fontSize: '12px', color: '#94A3B8' }}>
-                Auction ended but claims open at block {auctionInfo.claimBlock}
+                Round ended but claims open at block {auctionInfo.claimBlock}
                 {blocksUntilClaim !== null && blocksUntilClaim > 0n && (
-                  <span> (~{blocksUntilClaim.toString()} blocks / {Math.ceil(Number(blocksUntilClaim) * 2)}s remaining)</span>
+                  <span> (~{blocksUntilClaim.toString()} blocks / {Math.ceil(Number(blocksUntilClaim) * 2)}s left)</span>
                 )}
               </div>
             </div>
@@ -1021,151 +1106,179 @@ export default function SettleClient() {
           {auctionInfo?.isEnded && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
-              {userBids.length > 0 && (
-                <div style={{ ...panelStyle, border: '1px solid rgba(96,165,250,0.2)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#F8FAFC', marginBottom: '10px' }}>
-                    Your Bid IDs ({userBids.length} found)
+              {/* ─────── Two-column split: Founders (left) • Backers (right) ─────── */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'start' }}>
+
+                {/* LEFT COLUMN — FOUNDERS */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 12px',
+                    background: 'rgba(139,92,246,0.08)',
+                    border: '1px solid rgba(139,92,246,0.2)',
+                    borderRadius: '20px',
+                    width: 'fit-content'
+                  }}>
+                    <span style={{ fontSize: '11px' }}>&#9889;</span>
+                    <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', color: '#A78BFA' }}>Founders</span>
                   </div>
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {userBids.map((b, i) => {
-                      const isClaimed = claimedBids.has(b.bidId)
-                      return (
-                        <button key={i} onClick={() => setBidIdInput(b.bidId)}
-                          style={{
-                            padding: '6px 12px',
-                            background: bidIdInput === b.bidId ? 'rgba(96,165,250,0.2)' : isClaimed ? 'rgba(74,222,128,0.08)' : '#1e1e2e',
-                            border: bidIdInput === b.bidId ? '1px solid rgba(96,165,250,0.4)' : isClaimed ? '1px solid rgba(74,222,128,0.3)' : '1px solid #2d2d44',
-                            borderRadius: '6px', color: '#F8FAFC', fontSize: '12px', fontFamily: 'monospace', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '6px'
-                          }}>
-                          <span style={{ fontWeight: 700 }}>#{b.bidId}</span>
-                          <span style={{ fontSize: '9px', color: isClaimed ? '#4ADE80' : '#64748B' }}>
-                            {isClaimed ? 'claimed ✓' : b.source}
-                          </span>
-                        </button>
-                      )
-                    })}
+
+                  <div style={{ ...panelStyle, border: '1px solid rgba(139,92,246,0.2)' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#F8FAFC', marginBottom: '4px' }}>Collect the round</div>
+                    <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '16px' }}>Withdraw raised funds or recover unsold shares</div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <button onClick={() => handleSweepCurrency(false)} disabled={acting || bridging || (!isGraduated && !!auctionInfo?.isEnded)}
+                        style={{
+                          padding: '14px', background: 'linear-gradient(135deg, rgba(139,92,246,0.25), rgba(139,92,246,0.1))',
+                          border: '1px solid rgba(139,92,246,0.35)',
+                          borderRadius: '10px', color: '#A78BFA', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                          opacity: (acting || bridging || (!isGraduated && !!auctionInfo?.isEnded)) ? 0.5 : 1
+                        }}>
+                        {acting && !bridging ? 'Working...' : 'Collect funds'}
+                      </button>
+                      <button onClick={handleSweepUnsold} disabled={acting || bridging}
+                        style={{
+                          padding: '14px', background: 'rgba(96,165,250,0.08)',
+                          border: '1px solid rgba(96,165,250,0.25)',
+                          borderRadius: '10px', color: '#60A5FA', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                          opacity: acting || bridging ? 0.5 : 1
+                        }}>
+                        {acting ? 'Working...' : 'Recover unsold shares'}
+                      </button>
+                    </div>
+
+                    {!isGraduated && auctionInfo?.isEnded && (
+                      <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: '6px', fontSize: '11px', color: '#FBBF24', lineHeight: 1.6 }}>
+                        Round didn't reach its minimum. Use "Recover unsold shares" to reclaim tokens.
+                      </div>
+                    )}
+                    {isGraduated && (
+                      <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)', borderRadius: '6px', fontSize: '11px', color: '#4ADE80', lineHeight: 1.6 }}>
+                        Round funded successfully.
+                      </div>
+                    )}
+                    {isInitialized === false && (
+                      <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px', fontSize: '11px', color: '#F87171', lineHeight: 1.6 }}>
+                        Round not initialized. Initialize above first.
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
 
-              <div style={{ ...panelStyle, border: '1px solid rgba(74,222,128,0.2)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, #4ADE80, #22C55E)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>&#127919;</div>
-                  <div>
-                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#F8FAFC' }}>Bidders & Angels</div>
-                    <div style={{ fontSize: '11px', color: '#94A3B8' }}>Claim tokens you won or exit to get your USDC back</div>
+                {/* RIGHT COLUMN — BACKERS */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 12px',
+                    background: 'rgba(74,222,128,0.08)',
+                    border: '1px solid rgba(74,222,128,0.2)',
+                    borderRadius: '20px',
+                    width: 'fit-content'
+                  }}>
+                    <span style={{ fontSize: '11px' }}>&#127919;</span>
+                    <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', color: '#4ADE80' }}>Backers</span>
                   </div>
-                </div>
 
-                <div style={{ marginBottom: '12px', padding: '10px', background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)', borderRadius: '6px', fontSize: '11px', color: '#94A3B8', lineHeight: 1.6 }}>
-                  <strong style={{ color: '#60A5FA' }}>Order matters:</strong> Clicking <em>Claim Tokens</em> now automatically runs <em>Exit &amp; Refund</em> first if needed. Then it claims the tokens you won.
-                </div>
-
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ fontSize: '11px', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>Bid ID {userBids.length > 0 ? '(click above to select)' : ''}</label>
-                  <input
-                    type="number"
-                    value={bidIdInput}
-                    onChange={(e) => setBidIdInput(e.target.value)}
-                    placeholder="Enter bid ID"
-                    style={{ width: '100%', padding: '10px 12px', background: '#1e1e2e', border: '1px solid #2d2d44', borderRadius: '8px', color: '#F8FAFC', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                  {selectedBidAlreadyClaimed && (
-                    <div style={{ fontSize: '10px', color: '#4ADE80', marginTop: '4px' }}>
-                      ✓ Bid #{bidIdInput} already claimed in this session
+                  {userBids.length > 0 && (
+                    <div style={{ ...panelStyle, border: '1px solid rgba(96,165,250,0.2)', padding: '16px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#F8FAFC', marginBottom: '8px' }}>
+                        Your bid IDs ({userBids.length})
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {userBids.map((b, i) => {
+                          const isClaimed = claimedBids.has(b.bidId)
+                          return (
+                            <button key={i} onClick={() => setBidIdInput(b.bidId)}
+                              style={{
+                                padding: '6px 12px',
+                                background: bidIdInput === b.bidId ? 'rgba(96,165,250,0.2)' : isClaimed ? 'rgba(74,222,128,0.08)' : '#1e1e2e',
+                                border: bidIdInput === b.bidId ? '1px solid rgba(96,165,250,0.4)' : isClaimed ? '1px solid rgba(74,222,128,0.3)' : '1px solid #2d2d44',
+                                borderRadius: '6px', color: '#F8FAFC', fontSize: '12px', fontFamily: 'monospace', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: '6px'
+                              }}>
+                              <span style={{ fontWeight: 700 }}>#{b.bidId}</span>
+                              <span style={{ fontSize: '9px', color: isClaimed ? '#4ADE80' : '#64748B' }}>
+                                {isClaimed ? 'collected ✓' : b.source}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
+
+                  <div style={{ ...panelStyle, border: '1px solid rgba(74,222,128,0.2)' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#F8FAFC', marginBottom: '4px' }}>Collect your shares</div>
+                    <div style={{ fontSize: '11px', color: '#94A3B8', marginBottom: '16px' }}>Or exit for a full refund</div>
+
+                    <div style={{ marginBottom: '12px', padding: '10px', background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)', borderRadius: '6px', fontSize: '11px', color: '#94A3B8', lineHeight: 1.6 }}>
+                      <strong style={{ color: '#60A5FA' }}>We handle the order for you:</strong> collecting runs exit first if needed, then delivers your shares.
+                    </div>
+
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '11px', color: '#94A3B8', display: 'block', marginBottom: '4px' }}>Bid ID {userBids.length > 0 ? '(tap above to select)' : ''}</label>
+                      <input
+                        type="number"
+                        value={bidIdInput}
+                        onChange={(e) => setBidIdInput(e.target.value)}
+                        placeholder="Bid ID"
+                        style={{ width: '100%', padding: '10px 12px', background: '#1e1e2e', border: '1px solid #2d2d44', borderRadius: '8px', color: '#F8FAFC', fontSize: '13px', boxSizing: 'border-box' }}
+                      />
+                      {selectedBidAlreadyClaimed && (
+                        <div style={{ fontSize: '10px', color: '#4ADE80', marginTop: '4px' }}>
+                          ✓ Bid #{bidIdInput} already collected
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <button
+                        onClick={handleClaimTokens}
+                        disabled={acting || !bidIdInput || selectedBidAlreadyClaimed}
+                        style={{
+                          padding: '14px',
+                          background: selectedBidAlreadyClaimed ? 'rgba(74,222,128,0.15)' : 'linear-gradient(135deg, #4ADE80, #22C55E)',
+                          border: selectedBidAlreadyClaimed ? '1px solid rgba(74,222,128,0.3)' : 'none',
+                          borderRadius: '10px',
+                          color: selectedBidAlreadyClaimed ? '#4ADE80' : '#000',
+                          fontSize: '13px', fontWeight: 700,
+                          cursor: acting || !bidIdInput || selectedBidAlreadyClaimed ? 'not-allowed' : 'pointer',
+                          opacity: acting || !bidIdInput ? 0.5 : 1
+                        }}>
+                        {selectedBidAlreadyClaimed ? 'Collected ✓' : acting ? 'Working...' : 'Collect shares'}
+                      </button>
+                      <button
+                        onClick={handleExitBid}
+                        disabled={acting || !bidIdInput}
+                        style={{
+                          padding: '14px', background: 'transparent', border: '2px solid #F87171', borderRadius: '10px',
+                          color: '#F87171', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                          opacity: acting || !bidIdInput ? 0.5 : 1
+                        }}>
+                        {acting ? 'Working...' : 'Exit for refund'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  <button
-                    onClick={handleClaimTokens}
-                    disabled={acting || !bidIdInput || selectedBidAlreadyClaimed}
-                    style={{
-                      padding: '14px',
-                      background: selectedBidAlreadyClaimed ? 'rgba(74,222,128,0.15)' : 'linear-gradient(135deg, #4ADE80, #22C55E)',
-                      border: selectedBidAlreadyClaimed ? '1px solid rgba(74,222,128,0.3)' : 'none',
-                      borderRadius: '10px',
-                      color: selectedBidAlreadyClaimed ? '#4ADE80' : '#000',
-                      fontSize: '13px', fontWeight: 700,
-                      cursor: acting || !bidIdInput || selectedBidAlreadyClaimed ? 'not-allowed' : 'pointer',
-                      opacity: acting || !bidIdInput ? 0.5 : 1
-                    }}>
-                    {selectedBidAlreadyClaimed ? 'Claimed ✓' : acting ? 'Processing...' : 'Claim Tokens'}
-                  </button>
-                  <button
-                    onClick={handleExitBid}
-                    disabled={acting || !bidIdInput}
-                    style={{
-                      padding: '14px', background: 'transparent', border: '2px solid #F87171', borderRadius: '10px',
-                      color: '#F87171', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-                      opacity: acting || !bidIdInput ? 0.5 : 1
-                    }}>
-                    {acting ? 'Processing...' : 'Exit & Refund'}
-                  </button>
-                </div>
               </div>
 
-              <div style={{ ...panelStyle, border: '1px solid rgba(139,92,246,0.2)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, #8B5CF6, #6366F1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>&#9889;</div>
-                  <div>
-                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#F8FAFC' }}>Founders & Startups</div>
-                    <div style={{ fontSize: '11px', color: '#94A3B8' }}>Collect raised USDC or reclaim unsold tokens</div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <button onClick={() => handleSweepCurrency(false)} disabled={acting || bridging || (!isGraduated && !!auctionInfo?.isEnded)}
-                      style={{
-                        padding: '14px', background: 'linear-gradient(135deg, rgba(139,92,246,0.25), rgba(139,92,246,0.1))',
-                        border: '1px solid rgba(139,92,246,0.35)',
-                        borderRadius: '10px', color: '#A78BFA', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-                        opacity: (acting || bridging || (!isGraduated && !!auctionInfo?.isEnded)) ? 0.5 : 1
-                      }}>
-                      {acting && !bridging ? 'Processing...' : 'Sweep USDC to Wallet'}
-                    </button>
-                  </div>
-                  <button onClick={handleSweepUnsold} disabled={acting || bridging}
-                    style={{
-                      padding: '14px', background: 'rgba(96,165,250,0.08)',
-                      border: '1px solid rgba(96,165,250,0.25)',
-                      borderRadius: '10px', color: '#60A5FA', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
-                      opacity: acting || bridging ? 0.5 : 1
-                    }}>
-                    {acting ? 'Processing...' : 'Sweep Unsold Tokens'}
-                  </button>
-                </div>
-
-                {!isGraduated && auctionInfo?.isEnded && (
-                  <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: '6px', fontSize: '11px', color: '#FBBF24', lineHeight: 1.6 }}>
-                    Auction did not graduate (minimum raise not met). Sweep Currency is unavailable. Use "Sweep Unsold Tokens" to reclaim tokens. Bidders should use "Exit & Refund" above.
-                  </div>
-                )}
-                {isGraduated && (
-                  <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)', borderRadius: '6px', fontSize: '11px', color: '#4ADE80', lineHeight: 1.6 }}>
-                    Auction graduated!
-                  </div>
-                )}
-                {isInitialized === false && (
-                  <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px', fontSize: '11px', color: '#F87171', lineHeight: 1.6 }}>
-                    Auction is not initialized. All settlement actions will fail until you click "Initialize Auction" above.
-                  </div>
-                )}
-              </div>
-
+              {/* ─────── How settlement works — full width below the split ─────── */}
               <div style={{ ...panelStyle }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: '#F8FAFC', marginBottom: '8px' }}>How Settlement Works</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: '#F8FAFC', marginBottom: '8px' }}>How settlement works</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
                   {[
-                    { num: '1', text: 'Auction ends when end block is reached on-chain' },
-                    { num: '2', text: 'Wait for claim block (may be same as end block)' },
-                    { num: '3', text: 'Winning bidders claim tokens at clearing price' },
-                    { num: '4', text: 'Non-winning bidders exit to get full USDC refund' },
-                    { num: '5', text: 'Founder sweeps raised USDC to wallet or bridges to Arc Testnet via CCTP' },
-                    { num: '6', text: 'Founder sweeps any unsold tokens back to wallet' },
+                    { num: '1', text: 'The round closes when its timer runs out' },
+                    { num: '2', text: 'Wait a beat for the last bids to settle' },
+                    { num: '3', text: 'Backers collect their shares at the final price' },
+                    { num: '4', text: 'Backers who missed out exit for a full refund' },
+                    { num: '5', text: 'Founder collects the raised funds' },
+                    { num: '6', text: 'Founder recovers any unsold shares' },
                   ].map(s => (
                     <div key={s.num} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', background: '#1e1e2e', borderRadius: '6px' }}>
                       <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'linear-gradient(135deg, #8B5CF6, #6366F1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#fff', fontWeight: 700, flexShrink: 0 }}>{s.num}</div>
@@ -1180,7 +1293,7 @@ export default function SettleClient() {
           {!auctionInfo && auctionAddress && !loadingInfo && (
             <div style={{ ...panelStyle, textAlign: 'center' }}>
               <div style={{ fontSize: '13px', color: '#94A3B8' }}>
-                Enter a valid auction contract address to view settlement options
+                Nothing to settle yet. Once your round closes, your share of the shares will appear here.
               </div>
             </div>
           )}

@@ -1,4 +1,4 @@
-//lib/auctionStore.ts
+// lib/auctionStore.ts
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { formatEther, parseEther, type Address } from 'viem'
@@ -37,6 +37,14 @@ interface StoredAuction {
   ensName?: string
   ensSubdomain?: string
   ensFullName?: string
+  // ── Listing metadata ──
+  name?: string
+  ticker?: string
+  tagline?: string
+  roundType?: string
+  category?: string
+  description?: string
+  color?: string
 }
 
 interface Auction {
@@ -51,6 +59,14 @@ interface Auction {
   ensName?: string
   ensSubdomain?: string
   ensFullName?: string
+  // ── Listing metadata ──
+  name?: string
+  ticker?: string
+  tagline?: string
+  roundType?: string
+  category?: string
+  description?: string
+  color?: string
 }
 
 interface AuctionStoreState {
@@ -66,7 +82,7 @@ interface AuctionStoreState {
   getAuction: (address: Address) => Auction | null
   getAllAuctions: () => Auction[]
   removeAuction: (address: Address) => void
-  resetAllAuctions: () => void // Add reset function
+  resetAllAuctions: () => void
 }
 
 const bidToStored = (bid: Omit<Bid, 'id' | 'timestamp'> & { id?: string, timestamp?: number }): StoredBid => {
@@ -107,7 +123,14 @@ const auctionToStored = (auction: Omit<Auction, 'createdAt'> & { createdAt?: num
     jobId: auction.jobId?.toString(),
     ensName: auction.ensName,
     ensSubdomain: auction.ensSubdomain,
-    ensFullName: auction.ensFullName
+    ensFullName: auction.ensFullName,
+    name: auction.name,
+    ticker: auction.ticker,
+    tagline: auction.tagline,
+    roundType: auction.roundType,
+    category: auction.category,
+    description: auction.description,
+    color: auction.color,
   }
 }
 
@@ -123,7 +146,14 @@ const storedToAuction = (stored: StoredAuction): Auction => {
     jobId: stored.jobId ? BigInt(stored.jobId) : undefined,
     ensName: stored.ensName,
     ensSubdomain: stored.ensSubdomain,
-    ensFullName: stored.ensFullName
+    ensFullName: stored.ensFullName,
+    name: stored.name,
+    ticker: stored.ticker,
+    tagline: stored.tagline,
+    roundType: stored.roundType,
+    category: stored.category,
+    description: stored.description,
+    color: stored.color,
   }
 }
 
@@ -132,14 +162,14 @@ export const useAuctionStore = create<AuctionStoreState>()(
     (set, get) => ({
       bids: [],
       auctions: [],
-      
+
       addBid: (bidData) => {
         const storedBid = bidToStored({
           ...bidData,
           id: `${bidData.auctionAddress}-${Date.now()}-${Math.random()}`,
           timestamp: Date.now()
         })
-        
+
         set((state) => {
           const newBids = [...state.bids, storedBid]
           console.log('📊 Bid added to store:', {
@@ -150,7 +180,7 @@ export const useAuctionStore = create<AuctionStoreState>()(
           return { bids: newBids }
         })
       },
-      
+
       clearBids: (auctionAddress) => {
         const addressStr = auctionAddress
         set((state) => {
@@ -158,28 +188,28 @@ export const useAuctionStore = create<AuctionStoreState>()(
           return { bids: filteredBids }
         })
       },
-      
+
       getBidsForAuction: (auctionAddress) => {
         const addressStr = auctionAddress
         return get().bids
           .filter(bid => bid.auctionAddress === addressStr)
           .map(storedToBid)
       },
-      
+
       getTotalETHForAuction: (auctionAddress) => {
         const addressStr = auctionAddress
         return get().bids
           .filter(bid => bid.auctionAddress === addressStr)
           .reduce((sum, storedBid) => sum + BigInt(storedBid.amount), 0n)
       },
-      
+
       getBidderCountForAuction: (auctionAddress) => {
         const addressStr = auctionAddress
         const auctionBids = get().bids.filter(bid => bid.auctionAddress === addressStr)
         const uniqueBidders = new Set(auctionBids.map(b => b.bidder.toLowerCase()))
         return uniqueBidders.size
       },
-      
+
       createTestBids: (auctionAddress, count = 10) => {
         const store = get()
         const testBidders: Address[] = [
@@ -192,7 +222,7 @@ export const useAuctionStore = create<AuctionStoreState>()(
           '0x14dC79964da2C08b23698B3D3cc7Ca32193d9955',
           '0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f',
         ].map(a => a as Address)
-        
+
         const amounts = [
           parseEther('0.04'),
           parseEther('0.03'),
@@ -205,11 +235,11 @@ export const useAuctionStore = create<AuctionStoreState>()(
           parseEther('0.006'),
           parseEther('0.005'),
         ]
-        
+
         for (let i = 0; i < Math.min(count, 10); i++) {
           const bidder = testBidders[i % testBidders.length]
           const amount = amounts[i % amounts.length]
-          
+
           store.addBid({
             bidder,
             amount,
@@ -218,7 +248,7 @@ export const useAuctionStore = create<AuctionStoreState>()(
             txHash: `0xtest${i}`
           })
         }
-        
+
         console.log(`✅ Created ${Math.min(count, 10)} test bids for auction ${auctionAddress}`)
       },
 
@@ -227,15 +257,24 @@ export const useAuctionStore = create<AuctionStoreState>()(
           ...auctionData,
           createdAt: Date.now()
         })
-        
+
         set((state) => {
-          const newAuctions = [...state.auctions, storedAuction]
+          // Replace if the address already exists, otherwise append.
+          // This makes re-creating with updated metadata idempotent.
+          const existingIdx = state.auctions.findIndex(
+            a => a.address.toLowerCase() === storedAuction.address.toLowerCase()
+          )
+          const newAuctions = existingIdx >= 0
+            ? state.auctions.map((a, i) => (i === existingIdx ? storedAuction : a))
+            : [...state.auctions, storedAuction]
+
           console.log('🏛️ Auction added to store:', {
             address: auctionData.address,
             creator: auctionData.creator,
+            name: auctionData.name,
+            roundType: auctionData.roundType,
             startBlock: auctionData.startBlock,
             endBlock: auctionData.endBlock,
-            currentBlock: Math.floor(Date.now() / 1000 / 12) // Rough estimate
           })
           return { auctions: newAuctions }
         })
@@ -259,7 +298,6 @@ export const useAuctionStore = create<AuctionStoreState>()(
         })
       },
 
-      // Add reset function
       resetAllAuctions: () => {
         set({ auctions: [], bids: [] })
         console.log('🧹 All auctions and bids cleared from store')
