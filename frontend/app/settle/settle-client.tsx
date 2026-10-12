@@ -1146,7 +1146,7 @@ export default function SettleClient() {
                 )}
                 {isGraduated && (
                   <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)', borderRadius: '6px', fontSize: '11px', color: '#4ADE80', lineHeight: 1.6 }}>
-                    Auction graduated! Sweep to your wallet or directly to Arc Testnet via CCTP bridge (~15-20 min delivery).
+                    Auction graduated!
                   </div>
                 )}
                 {isInitialized === false && (
