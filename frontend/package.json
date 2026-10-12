@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 5000",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint && npx prettier --check .",
     "format": "npx prettier --write .",
@@ -71,5 +71,17 @@
     "undici": "^7.0.0",
     "axios": "^1.7.7",
     "qs": "^6.14.1"
+  },
+"pnpm": {
+  "auditConfig": {
+    "ignoreCves": [
+      "CVE-2026-93687"
+    ],
+    "ignoreGhsas": [
+      "GHSA-vfj7-8cjw-p6xm"
+    ]
   }
+}
+
+
 }

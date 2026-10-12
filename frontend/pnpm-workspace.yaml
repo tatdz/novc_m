@@ -1,0 +1,12 @@
+allowBuilds:
+  bufferutil: true
+  keccak: true
+  protobufjs: true
+  unrs-resolver: true
+  utf-8-validate: true
+
+overrides:
+  undici: ^6.27.0
+  ws: ^8.21.0
+  postcss: ^8.5.18
+  "@grpc/grpc-js": ^1.13.6
