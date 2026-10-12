@@ -65,7 +65,7 @@ const PYTH_ABI = [{
   type: 'function',
   stateMutability: 'view',
   inputs: [
-    { name: 'id', type: 'bytes32' },
+    { id: 'id', name: 'id', type: 'bytes32' },
     { name: 'age', type: 'uint256' }
   ],
   outputs: [
@@ -852,11 +852,28 @@ export function AngelPoolDashboard() {
   const auctionSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.auctionSlice) : 0
   const idleSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.idleSlice) : 0
 
+  // ── Investor's slice of the yield pool ──
+  // investorInfo.sharePercentage is a whole-number percent string like "114.70%".
+  // Convert it to a fraction first (÷100), then multiply by the yield slice.
+  // Prior version multiplied the raw number directly, which produced wildly
+  // inflated values like "$3.441000 of $3.00".
   const investorAPYValue = (() => {
     if (!hookPoolInfo || !investorInfo) return 0
-    const shareRaw = parseFloat(investorInfo.sharePercentage.replace('%', ''))
+    const sharePct = parseFloat(String(investorInfo.sharePercentage).replace('%', ''))
+    if (!Number.isFinite(sharePct)) return 0
     const apySliceVal = parseFloat(hookPoolInfo.apySlice)
-    return (shareRaw / 100) * apySliceVal
+    if (!Number.isFinite(apySliceVal)) return 0
+    const value = (sharePct / 100) * apySliceVal
+    return Math.max(0, Math.min(value, apySliceVal))
+  })()
+
+  // For display we want the raw percentage the user holds, capped at 100%
+  // so the header reads sensibly.
+  const investorSharePct = (() => {
+    if (!investorInfo) return 0
+    const raw = parseFloat(String(investorInfo.sharePercentage).replace('%', ''))
+    if (!Number.isFinite(raw)) return 0
+    return Math.min(raw, 100)
   })()
 
   const formatFeeDisplay = (fee: string | null): string => {
@@ -920,34 +937,26 @@ export function AngelPoolDashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* User Guidance Section */}
+      {/* What this pool is — one short paragraph. */}
       <div style={{
-        padding: '12px',
-        background: 'rgba(139,92,246,0.1)',
-        borderRadius: '8px',
-        border: '1px solid rgba(139,92,246,0.2)',
-        fontSize: '12px',
-        color: '#F8FAFC',
-        lineHeight: '1.6'
+        padding: '14px 16px',
+        background: 'linear-gradient(135deg, rgba(139,92,246,0.10), rgba(96,165,250,0.06))',
+        borderRadius: '10px',
+        border: '1px solid rgba(139,92,246,0.25)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-          <span style={{ fontSize: '16px' }}>ℹ️</span>
-          <span style={{ fontWeight: 600, color: '#A78BFA' }}>How the pool works</span>
+        <div style={{ fontSize: '13px', fontWeight: 700, color: '#F8FAFC', marginBottom: '4px' }}>
+          Angel Pool
         </div>
-        <ol style={{ margin: '4px 0 0 24px', color: '#94A3B8', fontSize: '11px' }}>
-          <li>Deposit money — it starts in the idle balance</li>
-          <li>Split it 30% to yield / 70% to rounds</li>
-          <li>Yield earns a small fee on every trade</li>
-          <li>Rounds slice lets you suggest and vote on deals</li>
-          <li><span style={{ color: '#FBBF24' }}>⏱️ Refreshes every 10 seconds</span></li>
-        </ol>
+        <div style={{ fontSize: '11px', color: '#94A3B8', lineHeight: 1.6 }}>
+          Angels pool capital together, vote on which rounds to back and share the upside proportionally. Anyone can join - a public bidder here becomes a co-investor and co-decider.
+        </div>
       </div>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '18px' }}>🏊</span>
-          <span style={{ fontWeight: 600, color: '#F8FAFC', fontSize: '16px' }}>Angel Pool</span>
+          <span style={{ fontWeight: 600, color: '#F8FAFC', fontSize: '16px' }}>Pool</span>
           <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(139,92,246,0.1)', color: '#A78BFA' }}>
             {hookPoolInfo?.totalInvestors || 0} member{parseInt(hookPoolInfo?.totalInvestors || '0') !== 1 ? 's' : ''}
           </span>
@@ -1192,15 +1201,15 @@ export function AngelPoolDashboard() {
                 </span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-<select value={proposalAuction} onChange={(e) => setProposalAuction(e.target.value)}
-  style={{ ...inputStyle, cursor: 'pointer' }}>
-  <option value="">Select a round…</option>
-  {availableAuctions.map((a: any) => (
-    <option key={a.address} value={a.address}>
-      {a.name ? `${a.name}${a.roundType ? ' · ' + a.roundType : ''}` : `${a.address.slice(0, 8)}...${a.address.slice(-4)}`}
-    </option>
-  ))}
-</select>
+                <select value={proposalAuction} onChange={(e) => setProposalAuction(e.target.value)}
+                  style={{ ...inputStyle, cursor: 'pointer' }}>
+                  <option value="">Select a round…</option>
+                  {availableAuctions.map((a: any) => (
+                    <option key={a.address} value={a.address}>
+                      {a.name ? `${a.name}${a.roundType ? ' · ' + a.roundType : ''}` : `${a.address.slice(0, 8)}...${a.address.slice(-4)}`}
+                    </option>
+                  ))}
+                </select>
                 <input type="number" value={proposalAmount} onChange={(e) => setProposalAmount(e.target.value)}
                   placeholder="USDC amount" style={inputStyle} />
                 <button onClick={handlePropose} disabled={!proposalAuction || !proposalAmount || loadingVote}
@@ -1626,10 +1635,10 @@ export function AngelPoolDashboard() {
                   <div>
                     <div style={{ fontSize: '9px', color: '#64748B' }}>Your earnings</div>
                     <div style={{ fontSize: '18px', fontWeight: 700, color: '#4ADE80' }}>
-                      ${investorAPYValue.toFixed(6)}
+                      ${investorAPYValue.toFixed(4)}
                     </div>
                     <div style={{ fontSize: '9px', color: '#64748B' }}>
-                      {investorInfo.sharePercentage} of ${hookPoolInfo ? parseFloat(hookPoolInfo.apySlice).toFixed(2) : '0'} yield pool
+                      {investorSharePct.toFixed(2)}% of ${hookPoolInfo ? parseFloat(hookPoolInfo.apySlice).toFixed(2) : '0.00'} yield pool
                     </div>
                   </div>
                   <button onClick={handleClaimAPY} disabled={claimingAPY || loading || investorAPYValue <= 0}

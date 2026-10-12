@@ -1,7 +1,7 @@
 // components/AuctionCreationPanel.tsx
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAccount, useWalletClient, usePublicClient, useChainId } from 'wagmi'
 import { type Address, parseUnits } from 'viem'
 import { CONTRACTS } from '@/lib/contracts'
@@ -57,6 +57,105 @@ function getExplorerUrl(chainId: number, txHash: string): string {
 
 const ROUND_TYPES = ['Pre-seed', 'Seed', 'Series A', 'Community']
 
+// ─── Confetti ───────────────────────────────────────────────────────
+// Lightweight canvas confetti. One burst per mount, cleans itself up.
+// No dependencies, no external network calls.
+function ConfettiBurst({ active }: { active: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const rafRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!active) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    const resize = () => {
+      canvas.width = window.innerWidth * dpr
+      canvas.height = window.innerHeight * dpr
+      canvas.style.width = `${window.innerWidth}px`
+      canvas.style.height = `${window.innerHeight}px`
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    resize()
+    window.addEventListener('resize', resize)
+
+    const colors = ['#8B5CF6', '#60A5FA', '#4ADE80', '#FBBF24', '#F472B6', '#22D3EE']
+    const originX = window.innerWidth / 2
+    const originY = window.innerHeight * 0.35
+
+    interface P { x: number; y: number; vx: number; vy: number; rot: number; vr: number; size: number; color: string; life: number }
+    const parts: P[] = []
+    const COUNT = 180
+    for (let i = 0; i < COUNT; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const speed = 6 + Math.random() * 10
+      parts.push({
+        x: originX,
+        y: originY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 4,
+        rot: Math.random() * Math.PI * 2,
+        vr: (Math.random() - 0.5) * 0.3,
+        size: 6 + Math.random() * 8,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        life: 1,
+      })
+    }
+
+    let frames = 0
+    const MAX_FRAMES = 160
+
+    const step = () => {
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+      frames++
+      for (const p of parts) {
+        p.vy += 0.35
+        p.vx *= 0.995
+        p.vy *= 0.995
+        p.x += p.vx
+        p.y += p.vy
+        p.rot += p.vr
+        p.life = Math.max(0, 1 - frames / MAX_FRAMES)
+
+        ctx.save()
+        ctx.globalAlpha = p.life
+        ctx.translate(p.x, p.y)
+        ctx.rotate(p.rot)
+        ctx.fillStyle = p.color
+        ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2)
+        ctx.restore()
+      }
+      if (frames < MAX_FRAMES) {
+        rafRef.current = requestAnimationFrame(step)
+      } else {
+        ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+      }
+    }
+    rafRef.current = requestAnimationFrame(step)
+
+    return () => {
+      window.removeEventListener('resize', resize)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [active])
+
+  if (!active) return null
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        pointerEvents: 'none',
+        zIndex: 9999,
+      }}
+    />
+  )
+}
+
 export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreationPanelProps) {
   const { address, isConnected } = useAccount()
   const { data: walletClient } = useWalletClient()
@@ -93,6 +192,9 @@ export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreati
   const [error, setError] = useState<string>('')
   const [success, setSuccess] = useState<string>('')
   const [isSwitching, setIsSwitching] = useState(false)
+  const [shareLink, setShareLink] = useState<string>('')
+  const [confettiActive, setConfettiActive] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const [createdAuction, setCreatedAuction] = useState<{
     address: string
@@ -291,6 +393,21 @@ export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreati
         color: pickColor(displayName),
       }))
 
+      // Build the share link and the X intent URL.
+      // The link points at the listings page anchored to this round.
+      const shareUrl = `https://novc-m.vercel.app/listings#${result.auctionAddress}`
+      const tweetText = [
+        `${displayName} is raising — ${listing.roundType}`,
+        listing.tagline ? listing.tagline : 'Community-backed round, live on NoVC.',
+        'Back it with anyone, same price for every backer:',
+      ].join('\n')
+      const intentUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}&url=${encodeURIComponent(shareUrl)}`
+      setShareLink(intentUrl)
+
+      // Fire the confetti burst.
+      setConfettiActive(true)
+      setTimeout(() => setConfettiActive(false), 3500)
+
       onAuctionCreated?.(result.auctionAddress, result.auctionAddress as Address)
       setStep('complete')
       setStatus('complete')
@@ -301,6 +418,16 @@ export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreati
     }
   }
 
+  const handleCopyShareUrl = async () => {
+    if (!createdAuction?.address) return
+    const plainUrl = `https://novc-m.vercel.app/listings#${createdAuction.address}`
+    try {
+      await navigator.clipboard.writeText(plainUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {}
+  }
+
   const handleReset = () => {
     setStep('main')
     setStatus('idle')
@@ -308,6 +435,8 @@ export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreati
     setAuctionAddress(undefined)
     setError('')
     setSuccess('')
+    setShareLink('')
+    setCopied(false)
     setParams({
       startDelayBlocks: '5',
       durationBlocks: '100',
@@ -374,50 +503,109 @@ export default function AuctionCreationPanel({ onAuctionCreated }: AuctionCreati
 
   if (step === 'complete') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: '#4ADE80', fontSize: '16px' }}>&#10003;</span>
-          <span style={{ fontWeight: 600, color: '#F8FAFC', fontSize: '14px' }}>Round is live</span>
-        </div>
-
-        {listing.name && (
-          <div style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(96,165,250,0.06))', borderRadius: '8px', padding: '12px', border: '1px solid rgba(139,92,246,0.2)' }}>
-            <div style={{ fontSize: '15px', fontWeight: 700, color: '#F8FAFC', marginBottom: '2px' }}>{listing.name}</div>
-            <div style={{ fontSize: '11px', color: '#A78BFA' }}>{listing.roundType}</div>
+      <>
+        <ConfettiBurst active={confettiActive} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#4ADE80', fontSize: '16px' }}>&#10003;</span>
+            <span style={{ fontWeight: 600, color: '#F8FAFC', fontSize: '14px' }}>Round is live</span>
           </div>
-        )}
 
-        <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '12px' }}>
-          <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Address</div>
-          <div style={{ fontSize: '11px', fontFamily: 'monospace', color: '#60A5FA', wordBreak: 'break-all' }}>
-            {createdAuction?.address}
+          {listing.name && (
+            <div style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.1), rgba(96,165,250,0.06))', borderRadius: '8px', padding: '12px', border: '1px solid rgba(139,92,246,0.2)' }}>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: '#F8FAFC', marginBottom: '2px' }}>{listing.name}</div>
+              <div style={{ fontSize: '11px', color: '#A78BFA' }}>{listing.roundType}</div>
+            </div>
+          )}
+
+          <div style={{ background: '#1e1e2e', borderRadius: '8px', padding: '12px' }}>
+            <div style={{ fontSize: '10px', color: '#64748B', marginBottom: '4px' }}>Address</div>
+            <div style={{ fontSize: '11px', fontFamily: 'monospace', color: '#60A5FA', wordBreak: 'break-all' }}>
+              {createdAuction?.address}
+            </div>
           </div>
-        </div>
 
-        {createdAuction?.transactionHash && (
-          <a href={getExplorerUrl(chainId, createdAuction.transactionHash)} target="_blank" rel="noopener noreferrer"
-            style={{
-              display: 'block',
-              padding: '8px',
-              background: 'rgba(96,165,250,0.1)',
-              borderRadius: '6px',
-              fontSize: '11px',
-              color: '#60A5FA',
-              textDecoration: 'none',
-              textAlign: 'center'
+          {createdAuction?.transactionHash && (
+            <a href={getExplorerUrl(chainId, createdAuction.transactionHash)} target="_blank" rel="noopener noreferrer"
+              style={{
+                display: 'block',
+                padding: '8px',
+                background: 'rgba(96,165,250,0.1)',
+                borderRadius: '6px',
+                fontSize: '11px',
+                color: '#60A5FA',
+                textDecoration: 'none',
+                textAlign: 'center'
+              }}>
+              View on explorer
+            </a>
+          )}
+
+          {/* ─── Share on X ─── */}
+          {shareLink && (
+            <div style={{
+              padding: '12px',
+              background: 'linear-gradient(135deg, rgba(96,165,250,0.10), rgba(139,92,246,0.06))',
+              borderRadius: '10px',
+              border: '1px solid rgba(96,165,250,0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
             }}>
-            View on explorer
-          </a>
-        )}
+              <div style={{ fontSize: '11px', color: '#F8FAFC', fontWeight: 600 }}>
+                Announce it
+              </div>
+              <div style={{ fontSize: '10px', color: '#94A3B8', lineHeight: 1.5 }}>
+                Share this round on X. Anyone with the link can back it.
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <a
+                  href={shareLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    flex: 1,
+                    padding: '10px',
+                    background: 'linear-gradient(135deg, #1D9BF0, #0A7BBF)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textAlign: 'center',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Post on X →
+                </a>
+                <button
+                  onClick={handleCopyShareUrl}
+                  style={{
+                    padding: '10px 14px',
+                    background: copied ? 'rgba(74,222,128,0.15)' : '#1e1e2e',
+                    border: copied ? '1px solid rgba(74,222,128,0.3)' : '1px solid #2d2d44',
+                    borderRadius: '8px',
+                    color: copied ? '#4ADE80' : '#F8FAFC',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {copied ? 'Copied ✓' : 'Copy link'}
+                </button>
+              </div>
+            </div>
+          )}
 
-        {auctionAddress && (
-          <MockTokenMintPanel auctionAddress={auctionAddress} onMinted={() => setSuccess('Round funded with 2M starter shares')} />
-        )}
+          {auctionAddress && (
+            <MockTokenMintPanel auctionAddress={auctionAddress} onMinted={() => setSuccess('Round funded with 2M starter shares')} />
+          )}
 
-        <button onClick={handleReset} style={{ ...btnStyle, background: 'linear-gradient(135deg, #6366F1, #4F46E5)' }}>
-          Start another
-        </button>
-      </div>
+          <button onClick={handleReset} style={{ ...btnStyle, background: 'linear-gradient(135deg, #6366F1, #4F46E5)' }}>
+            Start another
+          </button>
+        </div>
+      </>
     )
   }
 
