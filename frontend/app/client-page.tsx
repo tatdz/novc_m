@@ -119,6 +119,102 @@ function NoVCLogo({ size = 32 }: { size?: number }) {
 const panelStyle = { background: '#12121c', borderRadius: '12px', border: '1px solid #1e1e2e', padding: '16px' }
 
 // ------------------------------------------------------------------
+// Deterministic gradient avatar from any string seed.
+// No images, no network. Same input → same colors, always.
+// ------------------------------------------------------------------
+const AVATAR_COLORS: [string, string][] = [
+  ['#8B5CF6', '#6366F1'],
+  ['#60A5FA', '#3B82F6'],
+  ['#4ADE80', '#22C55E'],
+  ['#FBBF24', '#F59E0B'],
+  ['#F472B6', '#DB2777'],
+  ['#22D3EE', '#0891B2'],
+  ['#A78BFA', '#7C3AED'],
+  ['#FB923C', '#EA580C'],
+]
+
+function avatarGradient(seed: string): [string, string] {
+  if (!seed) return AVATAR_COLORS[0]
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]
+}
+
+// ------------------------------------------------------------------
+// Activity strip — a soft social signal below the hero.
+// Renders nothing when there's no activity, so it never shows "0 users".
+// ------------------------------------------------------------------
+function ActivityStrip() {
+  const { getAllAuctions } = useAuctionStore()
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 15000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const auctions = useMemo(() => getAllAuctions(), [getAllAuctions, tick])
+
+  // Only named rounds count as "real" activity. Rounds without a name
+  // are pre-naming-feature legacy entries and shouldn't inflate the count.
+  const named = auctions.filter(a => a.name && a.name.trim().length > 0)
+  if (named.length === 0) return null
+
+  // Sample 4 named rounds for the avatar stack.
+  const seeds = named.slice(0, 4).map(a => a.address)
+
+  return (
+    <section style={{ maxWidth: '1080px', margin: '0 auto', padding: '0 24px 24px' }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '14px',
+        padding: '10px 18px 10px 12px',
+        background: 'rgba(74,222,128,0.05)',
+        border: '1px solid rgba(74,222,128,0.18)',
+        borderRadius: '24px',
+        width: 'fit-content',
+        margin: '0 auto',
+      }}>
+        {/* Avatar stack of active rounds */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          {seeds.map((seed, i) => {
+            const [c1, c2] = avatarGradient(seed)
+            return (
+              <div
+                key={i}
+                style={{
+                  width: '22px',
+                  height: '22px',
+                  borderRadius: '50%',
+                  background: `linear-gradient(135deg, ${c1}, ${c2})`,
+                  border: '2px solid #0a0a14',
+                  marginLeft: i === 0 ? 0 : '-8px',
+                }}
+              />
+            )
+          })}
+        </div>
+
+        {/* Live pulse + count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            background: '#4ADE80',
+            boxShadow: '0 0 10px #4ADE80',
+          }} />
+          <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+            {named.length} round{named.length !== 1 ? 's' : ''} on NoVC
+          </span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ------------------------------------------------------------------
 // Testimonials — three short voices, one per role.
 // No photos, no fake logos. Just a quote, a name, and one line of context.
 // ------------------------------------------------------------------
@@ -158,6 +254,9 @@ function TestimonialsSection() {
         </div>
         <div style={{ fontSize: '22px', fontWeight: 700, color: '#F8FAFC', letterSpacing: '-0.5px' }}>
           Three ways NoVC changes the deal.
+        </div>
+        <div style={{ fontSize: '12px', color: '#64748B', marginTop: '10px' }}>
+          Founders, angels, and first-time backers — one fair price for all.
         </div>
       </div>
 
@@ -338,6 +437,9 @@ export default function ClientPage() {
             </ConnectButton.Custom>
           </div>
         </section>
+
+        {/* ───── LIVE ACTIVITY ───── */}
+        <ActivityStrip />
 
         <section style={{ maxWidth: '1080px', margin: '0 auto', padding: '32px 24px 64px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>

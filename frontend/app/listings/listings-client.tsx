@@ -11,9 +11,11 @@ import { CCA_ABI } from '@/lib/abis'
 import Link from 'next/link'
 import { formatUnits } from 'viem'
 
+// Demo content. Marked as EXAMPLE so judges and users know they are not real.
 const DUMMY_LISTINGS = [
   {
     id: 'demo-1',
+    isExample: true,
     name: 'Lumina Protocol',
     ticker: 'LUMI',
     tagline: 'Decentralized AI inference marketplace',
@@ -40,6 +42,7 @@ const DUMMY_LISTINGS = [
   },
   {
     id: 'demo-2',
+    isExample: true,
     name: 'VaultFi',
     ticker: 'VFI',
     tagline: 'Institutional-grade DeFi yield strategies',
@@ -66,6 +69,7 @@ const DUMMY_LISTINGS = [
   },
   {
     id: 'demo-3',
+    isExample: true,
     name: 'GreenLedger',
     ticker: 'GRN',
     tagline: 'On-chain carbon credit verification',
@@ -92,6 +96,7 @@ const DUMMY_LISTINGS = [
   },
   {
     id: 'demo-4',
+    isExample: true,
     name: 'Nexus ID',
     ticker: 'NXD',
     tagline: 'Self-sovereign identity for Web3',
@@ -184,22 +189,79 @@ function NoVCLogo({ size = 28 }: { size?: number }) {
   )
 }
 
+// Deterministic gradient avatar from an address or bidder string.
+// No images, no network. Same input → same colors, always.
+const AVATAR_COLORS = [
+  ['#8B5CF6', '#6366F1'],
+  ['#60A5FA', '#3B82F6'],
+  ['#4ADE80', '#22C55E'],
+  ['#FBBF24', '#F59E0B'],
+  ['#F472B6', '#DB2777'],
+  ['#22D3EE', '#0891B2'],
+  ['#A78BFA', '#7C3AED'],
+  ['#FB923C', '#EA580C'],
+]
+
+function avatarGradient(seed: string): [string, string] {
+  if (!seed) return AVATAR_COLORS[0] as [string, string]
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AVATAR_COLORS[h % AVATAR_COLORS.length] as [string, string]
+}
+
+// Small stack of backer avatars + count. Display-only.
+// `backers` is a list of seeds (addresses). If empty, renders nothing.
+function BackerStack({ backers, total }: { backers: string[]; total: number }) {
+  if (!backers || backers.length === 0) return null
+  const shown = backers.slice(0, 4)
+  const remaining = Math.max(0, (total || backers.length) - shown.length)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        {shown.map((seed, i) => {
+          const [c1, c2] = avatarGradient(seed)
+          return (
+            <div
+              key={i}
+              style={{
+                width: '20px',
+                height: '20px',
+                borderRadius: '50%',
+                background: `linear-gradient(135deg, ${c1}, ${c2})`,
+                border: '1.5px solid #0f0f1a',
+                marginLeft: i === 0 ? 0 : '-7px',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
+              }}
+            />
+          )
+        })}
+      </div>
+      <span style={{ fontSize: '10px', color: '#94A3B8' }}>
+        {total || backers.length} backed{remaining > 0 ? ` · +${remaining} more` : ''}
+      </span>
+    </div>
+  )
+}
+
+// Demo backer seeds for example listings — deterministic, so the avatars
+// are consistent across renders but are not tied to any real wallet.
+function exampleBackers(id: string, count: number): string[] {
+  const out: string[] = []
+  for (let i = 0; i < Math.min(count, 8); i++) out.push(`${id}-backer-${i}`)
+  return out
+}
+
 // Convert a stored on-chain round into the listing card shape.
-// Target = floorPrice × auctionTokenAmount (max possible raise).
-// Raised = currencyRaised read from the contract (passed in as a param).
-function roundToListing(a: any, opts: { isEnded: boolean; currencyRaised?: bigint }) {
+function roundToListing(a: any, opts: { isEnded: boolean; currencyRaised?: bigint; backers?: string[] }) {
   const name = a.name || `${a.address.slice(0, 8)}...${a.address.slice(-4)}`
   const ticker = a.ticker || name.split(/\s+/).map((w: string) => w[0]).join('').slice(0, 4).toUpperCase()
   const floorPriceStr = formatUnits(BigInt(a.floorPrice?.toString?.() || '0'), 6)
   const floorPriceNum = parseFloat(floorPriceStr) || 0
 
-  // Target: floor price × shares. This is the max raise.
-  // If auctionTokenAmount isn't stored, leave target at 0 (card hides the bar).
   const tokenAmount = Number(a.auctionTokenAmount || 0)
   const targetNum = tokenAmount > 0 ? floorPriceNum * tokenAmount : 0
   const targetStr = targetNum > 0 ? targetNum.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '0'
 
-  // Raised: from the on-chain currencyRaised, in USDC (6 decimals).
   const raisedNum = opts.currencyRaised
     ? Number(formatUnits(opts.currencyRaised, 6))
     : 0
@@ -213,6 +275,7 @@ function roundToListing(a: any, opts: { isEnded: boolean; currencyRaised?: bigin
   return {
     id: `chain-${a.address.toLowerCase()}`,
     isOnchain: true,
+    isExample: false,
     address: a.address as string,
     name,
     ticker,
@@ -222,7 +285,8 @@ function roundToListing(a: any, opts: { isEnded: boolean; currencyRaised?: bigin
     verified: false,
     raised: raisedStr,
     target: targetStr,
-    investors: 0,
+    investors: (opts.backers || []).length,
+    backers: opts.backers || [],
     floorPrice: floorPriceStr,
     endTime: opts.isEnded ? 'Ended' : 'Live now',
     roundType: a.roundType || '',
@@ -248,17 +312,13 @@ export default function ListingsClient() {
   const [filter, setFilter] = useState<FilterType>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [contractBlock, setContractBlock] = useState<number>(0)
-
-  // Per-round on-chain totals, keyed by lowercase address.
   const [raisedByRound, setRaisedByRound] = useState<Record<string, bigint>>({})
-  // Investor counts, keyed the same way. Fetched lazily.
-  const [investorsByRound, setInvestorsByRound] = useState<Record<string, number>>({})
+  const [backersByRound, setBackersByRound] = useState<Record<string, string[]>>({})
 
   const chainName = SUPPORTED_CHAINS.find(c => c.id === chainId)?.name || 'Unknown'
 
   const onchainAuctions = useMemo(() => getAllAuctions(), [getAllAuctions])
 
-  // Track current contract block, refresh every 15s.
   useEffect(() => {
     if (!publicClient) return
     let cancelled = false
@@ -273,22 +333,18 @@ export default function ListingsClient() {
     return () => { cancelled = true; clearInterval(interval) }
   }, [publicClient])
 
-  // Live rounds = auction exists and endBlock > currentBlock.
-  // Ended rounds are filtered out entirely from this page (they still
-  // appear in the app's BidPanel "Closed" optgroup for settlement).
   const liveRounds = useMemo(() => {
     if (contractBlock === 0) return []
     return onchainAuctions.filter(a => a.endBlock > contractBlock)
   }, [onchainAuctions, contractBlock])
 
-  // Fetch currencyRaised + bidder counts for each live round.
   useEffect(() => {
     if (!publicClient) return
     let cancelled = false
 
     const fetchAll = async () => {
       const raisedUpdate: Record<string, bigint> = {}
-      const investorsUpdate: Record<string, number> = {}
+      const backersUpdate: Record<string, string[]> = {}
 
       await Promise.all(liveRounds.map(async (a) => {
         const key = a.address.toLowerCase()
@@ -303,8 +359,6 @@ export default function ListingsClient() {
           raisedUpdate[key] = 0n
         }
 
-        // Count distinct BidSubmitted bidders. Use the rounds' startBlock
-        // as the earliest block we scan from so we don't walk the chain.
         try {
           const startBn = BigInt(a.startBlock || 0)
           const safeFrom = startBn > 100n ? startBn - 100n : 0n
@@ -328,15 +382,15 @@ export default function ListingsClient() {
             const owner = (log.args as any)?.owner as string | undefined
             if (owner) owners.add(owner.toLowerCase())
           }
-          investorsUpdate[key] = owners.size
+          backersUpdate[key] = Array.from(owners)
         } catch {
-          investorsUpdate[key] = 0
+          backersUpdate[key] = []
         }
       }))
 
       if (!cancelled) {
         setRaisedByRound(prev => ({ ...prev, ...raisedUpdate }))
-        setInvestorsByRound(prev => ({ ...prev, ...investorsUpdate }))
+        setBackersByRound(prev => ({ ...prev, ...backersUpdate }))
       }
     }
 
@@ -351,15 +405,12 @@ export default function ListingsClient() {
       const listing = roundToListing(a, {
         isEnded: false,
         currencyRaised: raisedByRound[key],
+        backers: backersByRound[key] || [],
       })
-      listing.investors = investorsByRound[key] ?? 0
       return listing
     })
-  }, [liveRounds, raisedByRound, investorsByRound])
+  }, [liveRounds, raisedByRound, backersByRound])
 
-  // Dummy listings: keep the ones that make sense for the current filter.
-  // The dummy "Nexus ID" already has status 'ended' — that's fine, it lives
-  // under the Closed filter as a demo.
   const combinedListings = useMemo(() => {
     return [...liveListings, ...DUMMY_LISTINGS]
   }, [liveListings])
@@ -438,13 +489,41 @@ export default function ListingsClient() {
             const targetNum = parseFloat(String(listing.target).replace(/,/g, '')) || 0
             const progressPct = targetNum > 0 ? (raisedNum / targetNum * 100) : 0
 
+            // Backer seeds for the avatar strip.
+            // Real rounds use on-chain owners; example rounds use deterministic fakes.
+            const backers = listing.isExample
+              ? exampleBackers(listing.id, listing.investors || 0)
+              : (listing.backers || [])
+
             return (
               <div key={listing.id} id={listing.address || listing.id}
                 style={{
                   background: '#12121c', borderRadius: '14px', border: isExpanded ? `1px solid ${listing.color}30` : '1px solid #1e1e2e',
                   overflow: 'hidden', transition: 'border-color 0.3s',
                   scrollMarginTop: '20px',
+                  position: 'relative',
                 }}>
+                {/* EXAMPLE ribbon for demo content */}
+                {listing.isExample && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '12px',
+                    right: '-28px',
+                    transform: 'rotate(35deg)',
+                    background: 'rgba(251,191,36,0.15)',
+                    border: '1px solid rgba(251,191,36,0.35)',
+                    color: '#FBBF24',
+                    fontSize: '9px',
+                    fontWeight: 700,
+                    letterSpacing: '1.2px',
+                    padding: '3px 32px',
+                    pointerEvents: 'none',
+                    zIndex: 2,
+                  }}>
+                    EXAMPLE
+                  </div>
+                )}
+
                 <div style={{ padding: '20px', cursor: 'pointer' }} onClick={() => setExpandedId(isExpanded ? null : listing.id)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -489,12 +568,14 @@ export default function ListingsClient() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#64748B' }}>
-                    <span>{listing.endTime}</span>
-                    <span style={{ color: '#475569' }}>·</span>
-                    <span>{listing.investors} backers</span>
-                    <span style={{ color: '#475569' }}>·</span>
-                    <span>From ${listing.floorPrice}</span>
+                  {/* Social surface: who's backing this */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <BackerStack backers={backers} total={listing.investors || 0} />
+                    <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#64748B' }}>
+                      <span>{listing.endTime}</span>
+                      <span style={{ color: '#475569' }}>·</span>
+                      <span>From ${listing.floorPrice}</span>
+                    </div>
                   </div>
                 </div>
 
