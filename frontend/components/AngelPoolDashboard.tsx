@@ -65,7 +65,7 @@ const PYTH_ABI = [{
   type: 'function',
   stateMutability: 'view',
   inputs: [
-    { id: 'id', name: 'id', type: 'bytes32' },
+    { name: 'id', type: 'bytes32' },
     { name: 'age', type: 'uint256' }
   ],
   outputs: [
@@ -377,6 +377,10 @@ export function AngelPoolDashboard() {
   }
 
   // ==================== PYTH PRICES ====================
+  // Both feeds now read on-chain from the same Pyth contract.
+  // The Pyth Pro proxy is used ONLY as a fallback if the on-chain read
+  // for USDC/USD fails. MON/USD has no proxy fallback; it uses its last
+  // known value on failure so the UI never blocks.
   const fetchPythPrices = async () => {
     if (!publicClient) {
       console.warn('[Pyth] publicClient not ready yet')
@@ -385,7 +389,7 @@ export function AngelPoolDashboard() {
     setPythLoading(true)
     setPythError(null)
 
-    // --- MON/USD: on-chain read ---
+    // --- MON/USD: on-chain read, then fallback to last-known ---
     let monEntry: PythPrice
     try {
       const [price, conf, expo, publishTime] = await publicClient.readContract({
@@ -404,10 +408,12 @@ export function AngelPoolDashboard() {
       console.log('[Pyth] MON/USD on-chain:', monEntry)
     } catch (err: any) {
       console.warn(
-        '[Pyth] MON/USD on-chain read failed, using fallback:',
+        '[Pyth] MON/USD on-chain read failed, using last-known fallback:',
         err?.shortMessage || err?.message
       )
-      monEntry = {
+      // Try to preserve the previous MON entry so the UI doesn't show $1.
+      const prevMon = pythPrices.find(p => p.feedName === 'MON/USD')
+      monEntry = prevMon || {
         price: '2702095',
         conf: '0',
         expo: -8,
@@ -416,45 +422,80 @@ export function AngelPoolDashboard() {
       }
     }
 
-    // --- USDC/USD: Pyth Pro proxy ---
+    // --- USDC/USD: on-chain read first, Pyth Pro proxy only on failure ---
     let usdcEntry: PythPrice
+    let usdcFromChain = false
     try {
-      const response = await fetch('/api/pyth')
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        throw new Error(body.error || `Pyth proxy returned ${response.status}`)
-      }
-      const data = await response.json()
-      const parsed = Array.isArray(data?.prices) ? data.prices : []
-      const usdcPrice = parsed.find((p: any) => p.feedName === 'USDC/USD')
-      if (!usdcPrice) {
-        throw new Error('USDC/USD missing from Pyth Pro response')
-      }
+      const [price, conf, expo, publishTime] = await publicClient.readContract({
+        address: PYTH_CONTRACT,
+        abi: PYTH_ABI,
+        functionName: 'getPriceNoOlderThan',
+        args: [PYTH_FEEDS.USDC_USD as `0x${string}`, 300n],
+      })
       usdcEntry = {
-        price: String(usdcPrice.price),
-        conf: String(usdcPrice.conf),
-        expo: Number(usdcPrice.expo),
-        publishTime: Number(usdcPrice.publishTime),
+        price: price.toString(),
+        conf: conf.toString(),
+        expo: Number(expo),
+        publishTime: Number(publishTime),
         feedName: 'USDC/USD',
       }
-      console.log('[Pyth] USDC/USD from Pyth Pro:', usdcEntry)
-    } catch (err: any) {
+      usdcFromChain = true
+      console.log('[Pyth] USDC/USD on-chain:', usdcEntry)
+    } catch (chainErr: any) {
       console.warn(
-        '[Pyth Pro] USDC/USD fetch failed, using $1.00 fallback:',
-        err?.message
+        '[Pyth] USDC/USD on-chain read failed, falling back to Pyth Pro proxy:',
+        chainErr?.shortMessage || chainErr?.message
       )
-      usdcEntry = {
-        price: '100000000',
-        conf: '0',
-        expo: -8,
-        publishTime: Math.floor(Date.now() / 1000),
-        feedName: 'USDC/USD',
+      // Fallback path: Pyth Pro proxy (server-side API key in /api/pyth).
+      try {
+        const response = await fetch('/api/pyth')
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}))
+          throw new Error(body.error || `Pyth proxy returned ${response.status}`)
+        }
+        const data = await response.json()
+        const parsed = Array.isArray(data?.prices) ? data.prices : []
+        const usdcPrice = parsed.find((p: any) => p.feedName === 'USDC/USD')
+        if (!usdcPrice) {
+          throw new Error('USDC/USD missing from Pyth Pro response')
+        }
+        usdcEntry = {
+          price: String(usdcPrice.price),
+          conf: String(usdcPrice.conf),
+          expo: Number(usdcPrice.expo),
+          publishTime: Number(usdcPrice.publishTime),
+          feedName: 'USDC/USD',
+        }
+        console.log('[Pyth Pro] USDC/USD via proxy fallback:', usdcEntry)
+      } catch (proxyErr: any) {
+        console.warn(
+          '[Pyth Pro] USDC/USD proxy also failed, using $1.00 fallback:',
+          proxyErr?.message
+        )
+        // Last resort. USDC is pegged to ~$1, so this is safe for display.
+        const prevUsdc = pythPrices.find(p => p.feedName === 'USDC/USD')
+        usdcEntry = prevUsdc || {
+          price: '100000000',
+          conf: '0',
+          expo: -8,
+          publishTime: Math.floor(Date.now() / 1000),
+          feedName: 'USDC/USD',
+        }
       }
     }
 
     const results = [monEntry, usdcEntry]
     setPythPrices(results)
-    console.log('[Pyth] Final price set:', results)
+
+    // Surface a soft notice if USDC/USD came from the proxy, so the user
+    // (and demo viewer) knows the source. Not an error — just a label.
+    if (!usdcFromChain) {
+      setPythError('USDC/USD is being read from the Pyth Pro fallback, not the on-chain contract.')
+    } else {
+      setPythError(null)
+    }
+
+    console.log('[Pyth] Final price set:', results, 'usdcFromChain=', usdcFromChain)
     setPythLoading(false)
   }
 
@@ -852,11 +893,6 @@ export function AngelPoolDashboard() {
   const auctionSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.auctionSlice) : 0
   const idleSliceVal = hookPoolInfo ? parseFloat(hookPoolInfo.idleSlice) : 0
 
-  // ── Investor's slice of the yield pool ──
-  // investorInfo.sharePercentage is a whole-number percent string like "114.70%".
-  // Convert it to a fraction first (÷100), then multiply by the yield slice.
-  // Prior version multiplied the raw number directly, which produced wildly
-  // inflated values like "$3.441000 of $3.00".
   const investorAPYValue = (() => {
     if (!hookPoolInfo || !investorInfo) return 0
     const sharePct = parseFloat(String(investorInfo.sharePercentage).replace('%', ''))
@@ -867,8 +903,6 @@ export function AngelPoolDashboard() {
     return Math.max(0, Math.min(value, apySliceVal))
   })()
 
-  // For display we want the raw percentage the user holds, capped at 100%
-  // so the header reads sensibly.
   const investorSharePct = (() => {
     if (!investorInfo) return 0
     const raw = parseFloat(String(investorInfo.sharePercentage).replace('%', ''))
@@ -1519,7 +1553,7 @@ export function AngelPoolDashboard() {
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>⚡</div>
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Price feed</div>
-                  <div style={{ fontSize: '9px', color: '#64748B' }}>MON on-chain • USDC via Pyth Pro</div>
+                  <div style={{ fontSize: '9px', color: '#64748B' }}>Both feeds on-chain via Pyth • proxy fallback</div>
                 </div>
               </div>
               <button onClick={fetchPythPrices} disabled={pythLoading}
@@ -1562,7 +1596,7 @@ export function AngelPoolDashboard() {
             <div style={{ marginTop: '10px', padding: '8px 10px', background: '#12121c', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#22C55E' }} />
               <span style={{ fontSize: '9px', color: '#64748B', fontFamily: 'monospace' }}>
-                MON: {PYTH_CONTRACT.slice(0, 10)}...{PYTH_CONTRACT.slice(-4)} • USDC: Pyth Pro
+                MON + USDC: {PYTH_CONTRACT.slice(0, 10)}...{PYTH_CONTRACT.slice(-4)}
               </span>
             </div>
           </div>
