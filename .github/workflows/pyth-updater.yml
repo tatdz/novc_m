@@ -1,0 +1,25 @@
+name: Pyth price updater
+
+on:
+  schedule:
+    - cron: '*/4 * * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @pythnetwork/pyth-evm-js viem
+      - name: Push Pyth updates
+        env:
+          PRIVATE_KEY: ${{ secrets.PYTH_UPDATER_PRIVATE_KEY }}
+          MONAD_RPC_URL: ${{ secrets.MONAD_RPC_URL }}
+        run: node scripts/pyth-updater.mjs

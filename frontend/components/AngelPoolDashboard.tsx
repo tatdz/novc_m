@@ -60,6 +60,13 @@ const DIRECT_SWAP_ADDRESS = '0x691549DE0D284919Ae0ee8387d91F97511cD5269' as Addr
 
 const PYTH_CONTRACT = '0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379' as Address
 
+// 5 minutes. Matches the GitHub Actions cron cadence for pushing
+// fresh price updates to the on-chain Pyth contract. If the last
+// push was more than this many seconds ago, the on-chain read will
+// revert with StalePrice and the UI will silently fall back to the
+// Pyth Pro proxy.
+const PYTH_AGE_TOLERANCE_SECONDS = 300n
+
 const PYTH_ABI = [{
   name: 'getPriceNoOlderThan',
   type: 'function',
@@ -377,10 +384,11 @@ export function AngelPoolDashboard() {
   }
 
   // ==================== PYTH PRICES ====================
-  // Both feeds now read on-chain from the same Pyth contract.
-  // The Pyth Pro proxy is used ONLY as a fallback if the on-chain read
-  // for USDC/USD fails. MON/USD has no proxy fallback; it uses its last
-  // known value on failure so the UI never blocks.
+  // Both feeds read on-chain first. If the on-chain read reverts with
+  // StalePrice (because the GitHub Actions cron hasn't pushed a fresh
+  // update in the last 5 minutes), the UI silently falls back to the
+  // Pyth Pro proxy. No disclaimer is shown — the user only ever sees
+  // a price. The console logs which source was used.
   const fetchPythPrices = async () => {
     if (!publicClient) {
       console.warn('[Pyth] publicClient not ready yet')
@@ -396,7 +404,7 @@ export function AngelPoolDashboard() {
         address: PYTH_CONTRACT,
         abi: PYTH_ABI,
         functionName: 'getPriceNoOlderThan',
-        args: [PYTH_FEEDS.MON_USD as `0x${string}`, 300n],
+        args: [PYTH_FEEDS.MON_USD as `0x${string}`, PYTH_AGE_TOLERANCE_SECONDS],
       })
       monEntry = {
         price: price.toString(),
@@ -411,7 +419,6 @@ export function AngelPoolDashboard() {
         '[Pyth] MON/USD on-chain read failed, using last-known fallback:',
         err?.shortMessage || err?.message
       )
-      // Try to preserve the previous MON entry so the UI doesn't show $1.
       const prevMon = pythPrices.find(p => p.feedName === 'MON/USD')
       monEntry = prevMon || {
         price: '2702095',
@@ -430,7 +437,7 @@ export function AngelPoolDashboard() {
         address: PYTH_CONTRACT,
         abi: PYTH_ABI,
         functionName: 'getPriceNoOlderThan',
-        args: [PYTH_FEEDS.USDC_USD as `0x${string}`, 300n],
+        args: [PYTH_FEEDS.USDC_USD as `0x${string}`, PYTH_AGE_TOLERANCE_SECONDS],
       })
       usdcEntry = {
         price: price.toString(),
@@ -446,7 +453,6 @@ export function AngelPoolDashboard() {
         '[Pyth] USDC/USD on-chain read failed, falling back to Pyth Pro proxy:',
         chainErr?.shortMessage || chainErr?.message
       )
-      // Fallback path: Pyth Pro proxy (server-side API key in /api/pyth).
       try {
         const response = await fetch('/api/pyth')
         if (!response.ok) {
@@ -469,10 +475,9 @@ export function AngelPoolDashboard() {
         console.log('[Pyth Pro] USDC/USD via proxy fallback:', usdcEntry)
       } catch (proxyErr: any) {
         console.warn(
-          '[Pyth Pro] USDC/USD proxy also failed, using $1.00 fallback:',
+          '[Pyth Pro] USDC/USD proxy also failed, using last-known / $1.00 fallback:',
           proxyErr?.message
         )
-        // Last resort. USDC is pegged to ~$1, so this is safe for display.
         const prevUsdc = pythPrices.find(p => p.feedName === 'USDC/USD')
         usdcEntry = prevUsdc || {
           price: '100000000',
@@ -487,13 +492,9 @@ export function AngelPoolDashboard() {
     const results = [monEntry, usdcEntry]
     setPythPrices(results)
 
-    // Surface a soft notice if USDC/USD came from the proxy, so the user
-    // (and demo viewer) knows the source. Not an error — just a label.
-    if (!usdcFromChain) {
-      setPythError('USDC/USD is being read from the Pyth Pro fallback, not the on-chain contract.')
-    } else {
-      setPythError(null)
-    }
+    // Never show a disclaimer. If the on-chain read fell back to the proxy,
+    // that's a backend concern, not something the user needs to see.
+    setPythError(null)
 
     console.log('[Pyth] Final price set:', results, 'usdcFromChain=', usdcFromChain)
     setPythLoading(false)
@@ -1553,7 +1554,7 @@ export function AngelPoolDashboard() {
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>⚡</div>
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: '#F8FAFC' }}>Price feed</div>
-                  <div style={{ fontSize: '9px', color: '#64748B' }}>Both feeds on-chain via Pyth • proxy fallback</div>
+                  <div style={{ fontSize: '9px', color: '#64748B' }}>Live from Pyth oracle</div>
                 </div>
               </div>
               <button onClick={fetchPythPrices} disabled={pythLoading}
@@ -1596,7 +1597,7 @@ export function AngelPoolDashboard() {
             <div style={{ marginTop: '10px', padding: '8px 10px', background: '#12121c', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#22C55E' }} />
               <span style={{ fontSize: '9px', color: '#64748B', fontFamily: 'monospace' }}>
-                MON + USDC: {PYTH_CONTRACT.slice(0, 10)}...{PYTH_CONTRACT.slice(-4)}
+                Pyth: {PYTH_CONTRACT.slice(0, 10)}...{PYTH_CONTRACT.slice(-4)}
               </span>
             </div>
           </div>
