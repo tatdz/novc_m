@@ -4,7 +4,6 @@ const nextConfig = {
 
   transpilePackages: ['@circle-fin/w3s-pw-web-sdk'],
 
-  // Webpack fallback (only used if explicitly running with --webpack flag)
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
@@ -18,25 +17,29 @@ const nextConfig = {
         buffer: require.resolve('buffer'),
       }
     }
-    
+
     config.resolve.alias = {
       ...config.resolve.alias,
       '@react-native-async-storage/async-storage': false,
       'pino-pretty': false,
     }
-    
+
     return config
   },
-  
+
   serverExternalPackages: [
     'libsodium-wrappers',
     'poseidon-lite',
   ],
-  
+
   typescript: {
     ignoreBuildErrors: true,
   },
-  // using next lint command instead
+
+  // Add this block. Skips ESLint during `next build` and Vercel builds.
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 }
 
 module.exports = nextConfig
