@@ -1,8 +1,8 @@
-// scripts/pyth-updater.mjs — single-run version for GitHub Actions
+// scripts/pyth-updater.mjs
 import { createWalletClient, createPublicClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { monadTestnet } from 'viem/chains'
-import { EvmPriceServiceConnection } from '@pythnetwork/pyth-evm-js'
+import { HermesClient } from '@pythnetwork/hermes-client'
 
 const HERMES_URL = 'https://hermes.pyth.network'
 const PYTH_CONTRACT = '0xFC6bd9F9f0c6481c6Af3A7Eb46b296A5B85ed379'
@@ -22,9 +22,28 @@ const account = privateKeyToAccount(
 const publicClient = createPublicClient({ chain: monadTestnet, transport: http(process.env.MONAD_RPC_URL) })
 const walletClient = createWalletClient({ chain: monadTestnet, transport: http(process.env.MONAD_RPC_URL), account })
 
-const hermes = new EvmPriceServiceConnection(HERMES_URL)
-const updateData = await hermes.getPriceFeedsUpdateData(FEEDS)
-const fee = await publicClient.readContract({ address: PYTH_CONTRACT, abi: PYTH_ABI, functionName: 'getUpdateFee', args: [updateData] })
-const hash = await walletClient.writeContract({ address: PYTH_CONTRACT, abi: PYTH_ABI, functionName: 'updatePriceFeeds', args: [updateData], value: fee * 2n })
+const hermes = new HermesClient(HERMES_URL)
+
+// Fetch latest signed price updates
+const priceUpdates = await hermes.getLatestPriceUpdates(FEEDS)
+const updateData = priceUpdates.binary.data.map((d) => '0x' + d)
+
+// Get the update fee from the on-chain Pyth contract
+const fee = await publicClient.readContract({
+  address: PYTH_CONTRACT,
+  abi: PYTH_ABI,
+  functionName: 'getUpdateFee',
+  args: [updateData],
+})
+
+// Submit the update. Overpay 2x; Pyth refunds excess.
+const hash = await walletClient.writeContract({
+  address: PYTH_CONTRACT,
+  abi: PYTH_ABI,
+  functionName: 'updatePriceFeeds',
+  args: [updateData],
+  value: fee * 2n,
+})
+
 await publicClient.waitForTransactionReceipt({ hash })
 console.log('Updated:', hash)

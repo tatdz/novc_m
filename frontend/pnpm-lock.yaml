@@ -26,6 +26,9 @@ importers:
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.4.0
+      '@pythnetwork/hermes-client':
+        specifier: ^3.1.0
+        version: 3.1.0(axios@1.20.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0))
       '@pythnetwork/pyth-evm-js':
         specifier: ^2.0.0
         version: 2.0.0(axios@1.20.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0))(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.5)
@@ -971,6 +974,10 @@ packages:
   '@pythnetwork/hermes-client@2.1.0':
     resolution: {integrity: sha512-XOtP5dvHfKNl+uvFzXCMI9OL7VdJ8eXsv5ahy6ZB3ArZ+UMM4U4OrPYQPwLvJwlpkBXpEqsJKlMawcoyCB+yMA==}
     engines: {node: '>=22.14.0'}
+
+  '@pythnetwork/hermes-client@3.1.0':
+    resolution: {integrity: sha512-KEILjOCtnq/CRfnmDSnNS3egBuSupDglAE/dIDy8Y9S+zMm69lFQJUP87fuymWdpkI0JKmGHWtVX6R9edEGNtA==}
+    engines: {node: ^24.0.0}
 
   '@pythnetwork/pyth-evm-js@2.0.0':
     resolution: {integrity: sha512-MgGO+QPJu7HWqkQgF/jzNBeXCcl/A7jVaFUMLXZw+Qyb5727QbRKPSy9Y6RFDDP4HYf0EyMG85jt9P+ZN1OrDg==}
@@ -6047,6 +6054,14 @@ snapshots:
   '@protobufjs/utf8@1.1.2': {}
 
   '@pythnetwork/hermes-client@2.1.0(axios@1.20.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0))':
+    dependencies:
+      '@zodios/core': 10.9.6(axios@1.20.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0))(zod@3.25.76)
+      eventsource: 3.0.7
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - axios
+
+  '@pythnetwork/hermes-client@3.1.0(axios@1.20.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0))':
     dependencies:
       '@zodios/core': 10.9.6(axios@1.20.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0))(zod@3.25.76)
       eventsource: 3.0.7
